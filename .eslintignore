@@ -1,0 +1,4 @@
+# common
+dist/ 
+build/ 
+pnpm-lock.yaml
