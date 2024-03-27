@@ -1,6 +1,6 @@
 {
   "name": "@starbemtech/star-db-query-builder",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "A query builder to be used with mysql or postgres",
   "author": "Julio Sousa <julio.sousa@starbem.app>",
   "main": "./dist/index.js",
@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc",
     "prepare": "husky",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "coverage": "jest --watchAll --coverage"
   },
   "repository": {
@@ -46,6 +46,7 @@
     "jest": "^29.7.0",
     "lint-staged": "^15.2.2",
     "prettier": "^3.2.5",
+    "ts-node": "^10.9.2",
     "typescript": "^5.4.3"
   },
   "dependencies": {
