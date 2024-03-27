@@ -9,12 +9,8 @@ node_modules
 # Runtime data
 tmp
 
-# Typescript project
-src
-
 # Examples (If applicable to your project)
 examples
 
 tsconfig.json
-.eslintrc.json
 .husky
