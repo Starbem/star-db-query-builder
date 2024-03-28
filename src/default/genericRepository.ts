@@ -1,3 +1,4 @@
+import { v4 as uuid } from 'uuid'
 import { QueryParams } from './types'
 import {
   createGroupByClause,
@@ -20,8 +21,8 @@ export const findFirst = async <T>({
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
 
-  const fields = createSelectFields(select)
-  const [whereClause, params] = createWhereClause(where)
+  const fields = createSelectFields(select, dbClient.clientType)
+  const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
 
@@ -30,8 +31,8 @@ export const findFirst = async <T>({
       ${whereClause.length > 7 ? whereClause : ''}
       ${groupByClause}
       ${orderByClause}
-    `,
-    [params]
+      `,
+    params
   )
 
   return rows[0] || null
@@ -49,8 +50,8 @@ export const findMany = async <T>({
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
 
-  const fields = createSelectFields(select)
-  const [whereClause, params] = createWhereClause(where)
+  const fields = createSelectFields(select, dbClient.clientType)
+  const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
   const limitClause = createLimitClause(limit)
@@ -62,7 +63,7 @@ export const findMany = async <T>({
       ${orderByClause}
       ${limitClause}
     `,
-    [params]
+    params
   )
 
   return rows || []
@@ -81,18 +82,46 @@ export const insert = async <T>({
   const keys = Object.keys(data)
   const values = Object.values(data)
 
+  keys.unshift('id')
+  const generatedUUID: string = uuid()
+  values.unshift(generatedUUID)
+
+  keys.push('updated_at')
+  values.push(new Date())
+
   const placeholders = generatePlaceholders(keys, dbClient.clientType)
-  let query = `INSERT INTO ${tableName} (${keys.join(', ')}) VALUES (${placeholders})`
+  let query = `INSERT INTO ${tableName} (${keys.join(
+    ', '
+  )}) VALUES (${placeholders})`
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
-      query += ` RETURNING ${createSelectFields(returning)}`
+      query += ` RETURNING ${createSelectFields(
+        returning,
+        dbClient.clientType
+      )}`
     }
   }
 
   const inserted = await dbClient.query<T[]>(query, values)
 
-  if (dbClient.clientType === 'pg') return inserted[0]
+  if (dbClient.clientType === 'mysql') {
+    const rows = await dbClient.query<T>(
+      `SELECT ${
+        returning && returning.length > 0
+          ? createSelectFields(returning, dbClient.clientType)
+          : '*'
+      } FROM ${tableName}
+        WHERE
+          id = ?
+      `,
+      [generatedUUID]
+    )
+
+    return rows[0]
+  }
+
+  return inserted[0]
 }
 
 export const update = async <T>({
@@ -115,13 +144,29 @@ export const update = async <T>({
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
-      query += ` RETURNIN ${createSelectFields(returning)}`
+      query += ` RETURNIN ${createSelectFields(returning, dbClient.clientType)}`
     }
   }
 
   const updated = await dbClient.query<T[]>(query, values)
 
-  if (dbClient.clientType === 'pg') return updated[0]
+  if (dbClient.clientType === 'mysql') {
+    const rows = await dbClient.query<T>(
+      `SELECT ${
+        returning && returning.length > 0
+          ? createSelectFields(returning, dbClient.clientType)
+          : '*'
+      } FROM ${tableName}
+        WHERE
+          id = ?
+      `,
+      [id]
+    )
+
+    return rows[0]
+  }
+
+  return updated[0]
 }
 
 export const deleteOne = async ({
@@ -136,8 +181,12 @@ export const deleteOne = async ({
 
   await dbClient.query(
     permanently
-      ? `DELETE FROM ${tableName} WHERE id = ${dbClient.clientType === 'pg' ? '$1' : '?'}`
-      : `UPDATE ${tableName} SET status = 'deleted' WHERE id = ${dbClient.clientType === 'pg' ? '$1' : '?'}`,
+      ? `DELETE FROM ${tableName} WHERE id = ${
+          dbClient.clientType === 'pg' ? '$1' : '?'
+        }`
+      : `UPDATE ${tableName} SET status = 'deleted' WHERE id = ${
+          dbClient.clientType === 'pg' ? '$1' : '?'
+        }`,
     [id]
   )
 }

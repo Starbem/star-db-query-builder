@@ -6,13 +6,26 @@ import {
   DBClients,
 } from './types'
 
-const arrayToStringWithQuotes = (items: string[]): string => {
-  const itemsWithQuotes = items.map((item) => `"${item}"`)
+const arrayToStringWithQuotes = (
+  items: string[],
+  clientType: DBClients
+): string => {
+  const itemsWithQuotes = items.map((item) =>
+    clientType === 'pg' ? `"${item}"` : `${item}`
+  )
   return itemsWithQuotes.join(', ')
 }
 
-export const createSelectFields = (fields?: string[]): string => {
-  return fields && fields.length > 0 ? arrayToStringWithQuotes(fields) : '*'
+const pgPlaceholderGenerator = (index: number) => `$${index}`
+const mysqlPlaceholderGenerator = () => `?`
+
+export const createSelectFields = (
+  fields: string[] = [],
+  clientType: DBClients
+): string => {
+  return fields && fields.length > 0
+    ? arrayToStringWithQuotes(fields, clientType)
+    : '*'
 }
 
 export const generatePlaceholders = (
@@ -37,7 +50,8 @@ export const generateSetClause = (
 
 export const createWhereClause = (
   conditions: Conditions = {},
-  startIndex: number = 1
+  startIndex = 1,
+  clientType: DBClients
 ): [string, any[], number] => {
   let index = startIndex
   const whereParts: string[] = []
@@ -48,17 +62,33 @@ export const createWhereClause = (
       if ('operator' in condition && 'value' in condition) {
         const { operator, value } = condition
         if (Array.isArray(value)) {
-          const placeholders = value.map(() => `$${index++}`).join(', ')
+          const placeholders = value
+            .map(() =>
+              clientType === 'pg'
+                ? pgPlaceholderGenerator(index++)
+                : mysqlPlaceholderGenerator()
+            )
+            .join(', ')
           if (operator === 'BETWEEN') {
             whereParts.push(
-              `"${key}" ${operator} ${placeholders.replace(', ', ' AND ')}`
+              clientType === 'pg'
+                ? `"${key}" ${operator} ${placeholders.replace(', ', ' AND ')}`
+                : `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
             )
           } else {
-            whereParts.push(`"${key}" ${operator} (${placeholders})`)
+            whereParts.push(
+              clientType === 'pg'
+                ? `"${key}" ${operator} (${placeholders})`
+                : `${key} ${operator} ${placeholders}`
+            )
           }
           values.push(...value)
         } else {
-          whereParts.push(`"${key}" ${operator} $${index++}`)
+          whereParts.push(
+            clientType === 'pg'
+              ? `"${key}" ${operator} ${pgPlaceholderGenerator(index++)}`
+              : `${key} ${operator} ${mysqlPlaceholderGenerator()}`
+          )
           values.push(value)
         }
       } else if ('type' in condition && 'conditions' in condition) {
@@ -74,7 +104,9 @@ export const createWhereClause = (
       }
     } else if (key) {
       // Condição simples
-      whereParts.push(`"${key}" = $${index}`)
+      whereParts.push(
+        clientType === 'pg' ? `"${key}" = $${index}` : `${key} = ?`
+      )
       values.push(condition)
       index++
     }
