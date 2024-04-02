@@ -23,12 +23,12 @@ export declare function findMany<T>({
   limit,
 }: QueryParams<T>): Promise<T[]>
 
-export declare function insert<T>({
+export declare function insert<P, R>({
   tableName,
   dbClient,
   data,
   returning,
-}: QueryParams<T> & { data: T; returning?: string[] }): Promise<T | void>
+}: QueryParams<R> & { data: P; returning?: string[] }): Promise<R | void>
 
 export declare function update<T>({
   tableName,

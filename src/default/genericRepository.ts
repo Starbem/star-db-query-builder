@@ -27,8 +27,7 @@ export const findFirst = async <T>({
     1,
     dbClient.clientType
   )
-  console.log(whereClause, 'WHERE')
-  console.log(params)
+
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
   try {
@@ -43,7 +42,7 @@ export const findFirst = async <T>({
 
     return rows[0] || null
   } catch (error) {
-    console.log(error, 'ERROR QUERY')
+    console.error(error, 'ERROR QUERY')
     return null
   }
 }
@@ -79,12 +78,12 @@ export const findMany = async <T>({
   return rows || []
 }
 
-export const insert = async <T>({
+export const insert = async <P, R>({
   tableName,
   dbClient,
   data,
   returning,
-}: QueryParams<T> & { data: any; returning?: string[] }): Promise<T> => {
+}: QueryParams<R> & { data: P; returning?: string[] }): Promise<R> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
@@ -113,10 +112,10 @@ export const insert = async <T>({
     }
   }
 
-  const inserted = await dbClient.query<T[]>(query, values)
+  const inserted = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows = await dbClient.query<T>(
+    const rows = await dbClient.query<R>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
@@ -134,13 +133,13 @@ export const insert = async <T>({
   return inserted[0]
 }
 
-export const update = async <T>({
+export const update = async <P, R>({
   tableName,
   dbClient,
   id,
   data,
   returning,
-}: QueryParams<T> & { data: T; returning?: string[] }): Promise<T | void> => {
+}: QueryParams<R> & { data: P; returning?: string[] }): Promise<R | void> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
   if (!id) throw new Error('ID is required')
@@ -158,10 +157,10 @@ export const update = async <T>({
     }
   }
 
-  const updated = await dbClient.query<T[]>(query, values)
+  const updated = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows = await dbClient.query<T>(
+    const rows = await dbClient.query<R>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
