@@ -17,25 +17,35 @@ export const findFirst = async <T>({
   where,
   groupBy,
   orderBy,
-}: QueryParams): Promise<T> => {
+}: QueryParams<T>): Promise<T | null> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
 
   const fields = createSelectFields(select, dbClient.clientType)
-  const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
+  const [whereClause, params] = createWhereClause<T>(
+    where,
+    1,
+    dbClient.clientType
+  )
+  console.log(whereClause, 'WHERE')
+  console.log(params)
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
-
-  const rows = await dbClient.query<T>(
-    `SELECT ${fields} FROM ${tableName}
+  try {
+    const rows = await dbClient.query<T>(
+      `SELECT ${fields} FROM ${tableName}
       ${whereClause.length > 7 ? whereClause : ''}
       ${groupByClause}
       ${orderByClause}
       `,
-    params
-  )
+      params
+    )
 
-  return rows[0] || null
+    return rows[0] || null
+  } catch (error) {
+    console.log(error, 'ERROR QUERY')
+    return null
+  }
 }
 
 export const findMany = async <T>({
@@ -46,7 +56,7 @@ export const findMany = async <T>({
   groupBy,
   orderBy,
   limit,
-}: QueryParams): Promise<T[]> => {
+}: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
 
@@ -74,7 +84,7 @@ export const insert = async <T>({
   dbClient,
   data,
   returning,
-}: QueryParams & { data: T; returning?: string[] }): Promise<T | void> => {
+}: QueryParams<T> & { data: any; returning?: string[] }): Promise<T> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
@@ -130,7 +140,7 @@ export const update = async <T>({
   id,
   data,
   returning,
-}: QueryParams & { data: T; returning?: string[] }): Promise<T | void> => {
+}: QueryParams<T> & { data: T; returning?: string[] }): Promise<T | void> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
   if (!id) throw new Error('ID is required')
@@ -169,12 +179,12 @@ export const update = async <T>({
   return updated[0]
 }
 
-export const deleteOne = async ({
+export const deleteOne = async <T>({
   tableName,
   dbClient,
   id,
   permanently = false,
-}: QueryParams & { permanently?: boolean }): Promise<void> => {
+}: QueryParams<T> & { permanently?: boolean }): Promise<void> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
   if (!id) throw new Error('ID is required')

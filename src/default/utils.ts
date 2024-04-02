@@ -1,10 +1,4 @@
-import {
-  Conditions,
-  Condition,
-  CompositeCondition,
-  OrderBy,
-  DBClients,
-} from './types'
+import { Conditions, Condition, OrderBy, DBClients } from './types'
 
 const arrayToStringWithQuotes = (
   items: string[],
@@ -48,8 +42,8 @@ export const generateSetClause = (
     .join(', ')
 }
 
-export const createWhereClause = (
-  conditions: Conditions = {},
+export const createWhereClause = <T>(
+  conditions: Conditions<T> = {},
   startIndex = 1,
   clientType: DBClients
 ): [string, any[], number] => {
@@ -57,7 +51,7 @@ export const createWhereClause = (
   const whereParts: string[] = []
   const values: any[] = []
 
-  const processCondition = (key: string, condition: Condition): number => {
+  const processCondition = (key: string, condition: Condition<T>) => {
     if (typeof condition === 'object' && condition !== null) {
       if ('operator' in condition && 'value' in condition) {
         const { operator, value } = condition
@@ -91,34 +85,51 @@ export const createWhereClause = (
           )
           values.push(value)
         }
-      } else if ('type' in condition && 'conditions' in condition) {
-        const compositeCondition: CompositeCondition = condition
-        const subWhereParts: string[] = []
-        compositeCondition.conditions.forEach((subCondition) => {
-          // Recurso: criar uma chave fictícia, pois as condições compostas não necessitam de chave
-          index = processCondition('', subCondition)
-        })
-        whereParts.push(
-          `(${subWhereParts.join(` ${compositeCondition.type} `)})`
-        )
+      } else {
+        console.error('Unsupported condition format: ', condition)
       }
-    } else if (key) {
-      // Condição simples
-      whereParts.push(
-        clientType === 'pg' ? `"${key}" = $${index}` : `${key} = ?`
-      )
-      values.push(condition)
-      index++
     }
-    return index
   }
 
-  Object.entries(conditions).forEach(([key, value]) => {
-    index = processCondition(key, value)
-  })
+  if ('OR' in conditions || 'AND' in conditions) {
+    const logicalOperator = conditions.OR ? 'OR' : 'AND'
+    const compositeConditions = conditions.OR || conditions.AND
+
+    if (Array.isArray(compositeConditions)) {
+      const subWhereParts = compositeConditions
+        .map((subCondition) => {
+          if (
+            typeof subCondition === 'object' &&
+            !Array.isArray(subCondition) &&
+            subCondition !== null
+          ) {
+            const key = Object.keys(subCondition)[0]
+            const condition = subCondition[key]
+            processCondition(key, condition)
+            return whereParts.pop()
+          }
+
+          return ''
+        })
+        .filter((part) => part)
+
+      whereParts.push(
+        clientType === 'pg'
+          ? `(${subWhereParts.join(` ${logicalOperator} `)})`
+          : `${subWhereParts.join(` ${logicalOperator} `)}`
+      )
+    }
+  } else {
+    Object.entries(conditions).forEach(([key, value]) => {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
+      processCondition(key, value)
+    })
+  }
 
   const whereClause =
     whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : ''
+
   return [whereClause, values, index]
 }
 

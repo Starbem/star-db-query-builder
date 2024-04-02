@@ -7,9 +7,7 @@ export interface QueryExec {
 
 type SimpleValue = string | number | boolean | Date
 
-type ConditionOperator = 'AND' | 'OR'
-
-interface OperatorCondition {
+export interface OperatorCondition {
   operator:
     | 'LIKE'
     | '='
@@ -26,27 +24,29 @@ interface OperatorCondition {
   value: SimpleValue | SimpleValue[]
 }
 
+export type LogicalOperator = 'OR' | 'AND'
+
+export type Condition<T> = OperatorCondition | LogicalCondition<T>
+
+interface LogicalCondition<T> {
+  OR?: Conditions<T>[]
+  AND?: Conditions<T>[]
+}
+
+export type Conditions<T> = {
+  [P in keyof T]?: Condition<T[P]>
+} & LogicalCondition<T>
+
 export type DBClients = 'pg' | 'mysql'
-
-export interface CompositeCondition {
-  type: ConditionOperator
-  conditions: Condition[]
-}
-
-export type Condition = SimpleValue | OperatorCondition | CompositeCondition
-
-export interface Conditions {
-  [key: string]: Condition
-}
 
 export type OrderBy = { field: string; direction: 'ASC' | 'DESC' }[]
 
-export interface QueryParams {
+export interface QueryParams<T> {
   tableName: string
   dbClient: IDatabaseClient
   id?: string
   select?: string[]
-  where?: Conditions
+  where?: Conditions<T>
   orderBy?: OrderBy
   groupBy?: string[]
   limit?: number

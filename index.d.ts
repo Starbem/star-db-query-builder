@@ -11,7 +11,7 @@ export declare function findFirst<T>({
   where,
   groupBy,
   orderBy,
-}: QueryParams): Promise<T>
+}: QueryParams<T>): Promise<T>
 
 export declare function findMany<T>({
   tableName,
@@ -21,14 +21,14 @@ export declare function findMany<T>({
   groupBy,
   orderBy,
   limit,
-}: QueryParams): Promise<T[]>
+}: QueryParams<T>): Promise<T[]>
 
 export declare function insert<T>({
   tableName,
   dbClient,
   data,
   returning,
-}: QueryParams & { data: T; returning?: string[] }): Promise<T | void>
+}: QueryParams<T> & { data: T; returning?: string[] }): Promise<T | void>
 
 export declare function update<T>({
   tableName,
@@ -36,11 +36,11 @@ export declare function update<T>({
   id,
   data,
   returning,
-}: QueryParams & { data: T; returning?: string[] }): Promise<T | void>
+}: QueryParams<T> & { data: T; returning?: string[] }): Promise<T | void>
 
-export declare function deleteOne({
+export declare function deleteOne<T>({
   tableName,
   dbClient,
   id,
   permanently,
-}: QueryParams & { permanently?: boolean }): Promise<void>
+}: QueryParams<T> & { permanently?: boolean }): Promise<void>
