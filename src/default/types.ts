@@ -9,18 +9,18 @@ type SimpleValue = string | number | boolean | Date
 
 export interface OperatorCondition {
   operator:
-  | 'LIKE'
-  | '='
-  | '>'
-  | '<'
-  | 'IN'
-  | 'BETWEEN'
-  | '!='
-  | '<='
-  | '>='
-  | 'NOT IN'
-  | 'LIKE'
-  | 'NOT LIKE'
+    | 'LIKE'
+    | '='
+    | '>'
+    | '<'
+    | 'IN'
+    | 'BETWEEN'
+    | '!='
+    | '<='
+    | '>='
+    | 'NOT IN'
+    | 'LIKE'
+    | 'NOT LIKE'
   value: SimpleValue | SimpleValue[]
 }
 

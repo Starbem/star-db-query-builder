@@ -1,5 +1,5 @@
 import { createSelectFields, createWhereClause } from '../../default/utils'
-import { QueryParams } from './types'
+import { QueryParams } from '../../default/types'
 
 export const getByUserAndSubscription = async <T>({
   tableName,
@@ -16,21 +16,16 @@ export const getByUserAndSubscription = async <T>({
     1,
     dbClient.clientType
   )
-  try {
-    const rows: any = await dbClient.query<T>(
-      `SELECT 
+
+  const rows = await dbClient.query<T>(
+    `SELECT 
         ${fields}
       FROM payments.plan_association_users pa
       INNER JOIN payments.plans ON pa.plan_id = plans.id
         ${whereClause}
         AND pa.status IN ('active', 'cancelation_requested', 'blocked')`,
-      params
-    )
+    params
+  )
 
-    return rows[0] || null
-  } catch (error) {
-    console.error(error, 'ERROR QUERY')
-
-    return null
-  }
+  return rows[0] || null
 }
