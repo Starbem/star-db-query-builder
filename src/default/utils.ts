@@ -97,7 +97,7 @@ export const createWhereClause = <T>(
 
     if (Array.isArray(compositeConditions)) {
       const subWhereParts = compositeConditions
-        .map((subCondition) => {
+        .map((subCondition: any) => {
           if (
             typeof subCondition === 'object' &&
             !Array.isArray(subCondition) &&
