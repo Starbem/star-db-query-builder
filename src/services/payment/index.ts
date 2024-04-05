@@ -27,5 +27,5 @@ export const getByUserAndSubscription = async <T>({
     params
   )
 
-  return rows[0] || null
+  return rows || null
 }
