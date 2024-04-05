@@ -4,6 +4,7 @@ import { DBClients, QueryParams } from './src/default/types'
 export declare function initDb<T>(config: { type: DBClients; options: T }): void
 export declare function getDbClient(): IDatabaseClient
 
+// Generic Methods
 export declare function findFirst<T>({
   tableName,
   dbClient,
@@ -11,7 +12,7 @@ export declare function findFirst<T>({
   where,
   groupBy,
   orderBy,
-}: QueryParams<T>): Promise<T>
+}: QueryParams<T>): Promise<T | null>
 
 export declare function findMany<T>({
   tableName,
@@ -44,3 +45,11 @@ export declare function deleteOne<T>({
   id,
   permanently,
 }: QueryParams<T> & { permanently?: boolean }): Promise<void>
+
+// Services Methods
+export declare function getByUserAndSubscription<T>({
+  tableName,
+  dbClient,
+  select,
+  where,
+}: QueryParams<T>): Promise<T | null>

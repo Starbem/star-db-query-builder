@@ -8,6 +8,7 @@ export * from './src/db/initDb'
 // Generic Repository
 export * from './src/default/genericRepository'
 
+// Services Repository
 export * from './src/services/payment'
 
 // Types Definition
