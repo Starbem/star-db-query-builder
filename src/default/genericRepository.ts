@@ -30,21 +30,17 @@ export const findFirst = async <T>({
 
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
-  try {
-    const rows = await dbClient.query<T>(
-      `SELECT ${fields} FROM ${tableName}
+
+  const rows = await dbClient.query<T>(
+    `SELECT ${fields} FROM ${tableName}
       ${whereClause.length > 7 ? whereClause : ''}
       ${groupByClause}
       ${orderByClause}
       `,
-      params
-    )
+    params
+  )
 
-    return rows[0] || null
-  } catch (error) {
-    console.error(error, 'ERROR QUERY')
-    return null
-  }
+  return rows[0] || null
 }
 
 export const findMany = async <T>({
