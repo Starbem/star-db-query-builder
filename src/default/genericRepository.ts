@@ -10,6 +10,19 @@ import {
   generateSetClause,
 } from './utils'
 
+interface JoinClause {
+  type: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL'
+  table: string
+  on: string
+}
+
+interface QueryBuilder {
+  select: string[]
+  from?: string
+  joins?: JoinClause[]
+  where?: string
+}
+
 export const findFirst = async <T>({
   tableName,
   dbClient,
@@ -31,7 +44,7 @@ export const findFirst = async <T>({
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
 
-  const rows = await dbClient.query<T>(
+  const rows: any = await dbClient.query<T>(
     `SELECT ${fields} FROM ${tableName}
       ${whereClause.length > 7 ? whereClause : ''}
       ${groupByClause}
@@ -111,7 +124,7 @@ export const insert = async <P, R>({
   const inserted = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows = await dbClient.query<R>(
+    const rows: any = await dbClient.query<R>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
@@ -156,7 +169,7 @@ export const update = async <P, R>({
   const updated = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows = await dbClient.query<R>(
+    const rows: any = await dbClient.query<R>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
@@ -194,4 +207,48 @@ export const deleteOne = async <T>({
         }`,
     [id]
   )
+}
+
+export const joins = async <T>({
+  tableName,
+  dbClient,
+  select,
+  joins,
+  where,
+}: QueryParams<T>): Promise<T[]> => {
+  if (!tableName) throw new Error('Table name is required')
+  if (!dbClient) throw new Error('DB client is required')
+
+  const fields = Array.isArray(select) ? select : []
+  const selectFields = createSelectFields(fields, dbClient.clientType)
+  const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
+
+  const queryBuilder: QueryBuilder = {
+    select: [selectFields],
+    from: tableName,
+    joins: joins,
+    where: whereClause,
+  }
+
+  const queryString = buildQuery(queryBuilder)
+
+  const rows = await dbClient.query<T[]>(queryString, params)
+
+  return rows
+}
+
+function buildQuery(params: QueryBuilder): string {
+  let queryString = `SELECT ${params.select.join(', ')} FROM ${params.from}`
+
+  if (params.joins) {
+    for (const join of params.joins) {
+      queryString += ` ${join.type} JOIN ${join.table} ON ${join.on}`
+    }
+  }
+
+  if (params.where) {
+    queryString += `${params.where}`
+  }
+
+  return queryString
 }

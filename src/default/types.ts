@@ -31,6 +31,7 @@ export type Condition<T> = OperatorCondition | LogicalCondition<T>
 interface LogicalCondition<T> {
   OR?: Conditions<T>[]
   AND?: Conditions<T>[]
+  JOINS?: Conditions<object>
 }
 
 export type Conditions<T> = {
@@ -41,6 +42,7 @@ export type DBClients = 'pg' | 'mysql'
 
 export type OrderBy = { field: string; direction: 'ASC' | 'DESC' }[]
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export interface QueryParams<T> {
   tableName: string
   dbClient: IDatabaseClient
@@ -50,4 +52,11 @@ export interface QueryParams<T> {
   orderBy?: OrderBy
   groupBy?: string[]
   limit?: number
+  joins?: JoinClause[]
+}
+
+interface JoinClause {
+  type: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL'
+  table: string
+  on: string
 }

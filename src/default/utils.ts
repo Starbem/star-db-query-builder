@@ -63,11 +63,18 @@ export const createWhereClause = <T>(
                 : mysqlPlaceholderGenerator()
             )
             .join(', ')
+
           if (operator === 'BETWEEN') {
             whereParts.push(
               clientType === 'pg'
                 ? `"${key}" ${operator} ${placeholders.replace(', ', ' AND ')}`
                 : `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
+            )
+          } else if (operator === 'IN') {
+            whereParts.push(
+              clientType === 'pg'
+                ? `"${key}" ${operator} ${placeholders.replace(', ', ' AND ')}`
+                : `${key} ${operator} (${placeholders})`
             )
           } else {
             whereParts.push(
@@ -83,12 +90,46 @@ export const createWhereClause = <T>(
               ? `"${key}" ${operator} ${pgPlaceholderGenerator(index++)}`
               : `${key} ${operator} ${mysqlPlaceholderGenerator()}`
           )
+
           values.push(value)
         }
-      } else {
-        console.error('Unsupported condition format: ', condition)
       }
     }
+  }
+
+  if ('JOINS' in conditions) {
+    const logicalOperator = conditions.JOINS ? 'AND' : 'OR'
+    const compositeConditions = conditions.JOINS
+
+    if (Array.isArray(compositeConditions)) {
+      const subWhereParts = compositeConditions
+        .map((subCondition: any) => {
+          if (
+            typeof subCondition === 'object' &&
+            !Array.isArray(subCondition) &&
+            subCondition !== null
+          ) {
+            const key = Object.keys(subCondition)[0]
+            const condition = subCondition[key]
+
+            processCondition(key, condition)
+            return whereParts.pop()
+          }
+          return ''
+        })
+        .filter((part) => part)
+      whereParts.push(
+        clientType === 'pg'
+          ? `(${subWhereParts.join(` ${logicalOperator} `)})`
+          : `${subWhereParts.join(` ${logicalOperator} `)}`
+      )
+    }
+  } else {
+    Object.entries(conditions).forEach(([key, value]) => {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
+      processCondition(key, value)
+    })
   }
 
   if ('OR' in conditions || 'AND' in conditions) {
