@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid'
-import { QueryParams } from './types'
+import { QueryParams, QueryBuilder } from './types'
 import {
   createGroupByClause,
   createLimitClause,
@@ -9,19 +9,6 @@ import {
   createWhereClause,
   generateSetClause,
 } from './utils'
-
-interface JoinClause {
-  type: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL'
-  table: string
-  on: string
-}
-
-interface QueryBuilder {
-  select: string[]
-  from?: string
-  joins?: JoinClause[]
-  where?: string
-}
 
 export const findFirst = async <T>({
   tableName,
@@ -230,14 +217,14 @@ export const joins = async <T>({
     where: whereClause,
   }
 
-  const queryString = buildQuery(queryBuilder)
+  const queryString = await buildQuery(queryBuilder)
 
   const rows = await dbClient.query<T[]>(queryString, params)
 
   return rows
 }
 
-function buildQuery(params: QueryBuilder): string {
+async function buildQuery(params: QueryBuilder): Promise<string> {
   let queryString = `SELECT ${params.select.join(', ')} FROM ${params.from}`
 
   if (params.joins) {

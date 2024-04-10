@@ -60,3 +60,10 @@ interface JoinClause {
   table: string
   on: string
 }
+
+export interface QueryBuilder {
+  select: string[]
+  from?: string
+  joins?: JoinClause[]
+  where?: string
+}
