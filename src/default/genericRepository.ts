@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid'
-import { QueryParams } from './types'
+import { QueryParams, QueryBuilder } from './types'
 import {
   createGroupByClause,
   createLimitClause,
@@ -194,4 +194,48 @@ export const deleteOne = async <T>({
         }`,
     [id]
   )
+}
+
+export const joins = async <T>({
+  tableName,
+  dbClient,
+  select,
+  joins,
+  where,
+}: QueryParams<T>): Promise<T[]> => {
+  if (!tableName) throw new Error('Table name is required')
+  if (!dbClient) throw new Error('DB client is required')
+
+  const fields = Array.isArray(select) ? select : []
+  const selectFields = createSelectFields(fields, dbClient.clientType)
+  const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
+
+  const queryBuilder: QueryBuilder = {
+    select: [selectFields],
+    from: tableName,
+    joins: joins,
+    where: whereClause,
+  }
+
+  const queryString = await buildQuery(queryBuilder)
+
+  const rows = await dbClient.query<T[]>(queryString, params)
+
+  return rows
+}
+
+async function buildQuery(params: QueryBuilder): Promise<string> {
+  let queryString = `SELECT ${params.select.join(', ')} FROM ${params.from}`
+
+  if (params.joins) {
+    for (const join of params.joins) {
+      queryString += ` ${join.type} JOIN ${join.table} ON ${join.on}`
+    }
+  }
+
+  if (params.where) {
+    queryString += `${params.where}`
+  }
+
+  return queryString
 }

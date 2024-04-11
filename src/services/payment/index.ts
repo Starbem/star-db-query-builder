@@ -21,7 +21,7 @@ export const getByUserAndSubscription = async <T>({
     `SELECT 
         ${fields}
       FROM payments.plan_association_users pa
-      INNER JOIN payments.plans ON pa.plan_id = plans.id
+      LEFT JOIN payments.plans ON pa.plan_id = plans.id
         ${whereClause}
         AND pa.status IN ('active', 'cancelation_requested', 'blocked')`,
     params
