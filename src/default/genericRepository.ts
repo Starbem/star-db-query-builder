@@ -31,7 +31,7 @@ export const findFirst = async <T>({
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
 
-  const rows: any = await dbClient.query<T>(
+  const rows = await dbClient.query<T>(
     `SELECT ${fields} FROM ${tableName}
       ${whereClause.length > 7 ? whereClause : ''}
       ${groupByClause}
@@ -111,7 +111,7 @@ export const insert = async <P, R>({
   const inserted = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows: any = await dbClient.query<R>(
+    const rows = await dbClient.query<R>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
@@ -156,7 +156,7 @@ export const update = async <P, R>({
   const updated = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows: any = await dbClient.query<R>(
+    const rows = await dbClient.query<R>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
