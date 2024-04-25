@@ -66,4 +66,5 @@ export interface QueryBuilder {
   from?: string
   joins?: JoinClause[]
   where?: string
+  groupBy?: string[]
 }

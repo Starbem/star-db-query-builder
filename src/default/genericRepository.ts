@@ -31,7 +31,7 @@ export const findFirst = async <T>({
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
 
-  const rows = await dbClient.query<T>(
+  const rows = await dbClient.query<T[]>(
     `SELECT ${fields} FROM ${tableName}
       ${whereClause.length > 7 ? whereClause : ''}
       ${groupByClause}
@@ -202,6 +202,7 @@ export const joins = async <T>({
   select,
   joins,
   where,
+  groupBy,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
@@ -209,12 +210,14 @@ export const joins = async <T>({
   const fields = Array.isArray(select) ? select : []
   const selectFields = createSelectFields(fields, dbClient.clientType)
   const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
+  const groupByClause = createGroupByClause(groupBy)
 
   const queryBuilder: QueryBuilder = {
     select: [selectFields],
     from: tableName,
     joins: joins,
     where: whereClause,
+    groupBy: [groupByClause],
   }
 
   const queryString = await buildQuery(queryBuilder)
