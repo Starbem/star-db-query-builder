@@ -145,7 +145,7 @@ export const update = async <P, R>({
   const values: any[] = Object.values(data)
 
   const setClause = generateSetClause(keys, dbClient.clientType)
-  let query = `UPDATE ${tableName} SET ${setClause} WHERE ${id}`
+  let query = `UPDATE ${tableName} SET ${setClause} WHERE id = '${id}'`
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
