@@ -203,6 +203,7 @@ export const joins = async <T>({
   joins,
   where,
   groupBy,
+  orderBy,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
@@ -211,6 +212,7 @@ export const joins = async <T>({
   const selectFields = createSelectFields(fields, dbClient.clientType)
   const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
   const groupByClause = createGroupByClause(groupBy)
+  const orderByClause = createOrderByClause(orderBy)
 
   const queryBuilder: QueryBuilder = {
     select: [selectFields],
@@ -218,6 +220,7 @@ export const joins = async <T>({
     joins: joins,
     where: whereClause,
     groupBy: [groupByClause],
+    orderBy: orderByClause,
   }
 
   const queryString = await buildQuery(queryBuilder)
@@ -238,6 +241,14 @@ async function buildQuery(params: QueryBuilder): Promise<string> {
 
   if (params.where) {
     queryString += `${params.where}`
+  }
+
+  if (params.groupBy) {
+    queryString += `${params.groupBy}`
+  }
+
+  if (params.orderBy) {
+    queryString += `${params.orderBy}`
   }
 
   return queryString
