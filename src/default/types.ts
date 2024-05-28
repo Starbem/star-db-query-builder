@@ -52,6 +52,7 @@ export interface QueryParams<T> {
   orderBy?: OrderBy
   groupBy?: string[]
   limit?: number
+  offset?: number
   joins?: JoinClause[]
 }
 
@@ -68,4 +69,6 @@ export interface QueryBuilder {
   where?: string
   groupBy?: string[]
   orderBy?: string
+  limit?: string
+  offset?: string
 }
