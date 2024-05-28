@@ -52,6 +52,7 @@ export interface QueryParams<T> {
   orderBy?: OrderBy
   groupBy?: string[]
   limit?: number
+  offset?: number
   joins?: JoinClause[]
 }
 

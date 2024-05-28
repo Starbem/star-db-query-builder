@@ -189,3 +189,8 @@ export const createLimitClause = (limit?: number) => {
   if (!limit) return ''
   return ` LIMIT ${limit}`
 }
+
+export const createOffsetClause = (offset?: number) => {
+  if (!offset) return ''
+  return ` OFFSET ${offset}`
+}

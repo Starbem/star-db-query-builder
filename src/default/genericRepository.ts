@@ -8,6 +8,7 @@ import {
   createSelectFields,
   createWhereClause,
   generateSetClause,
+  createOffsetClause,
 } from './utils'
 
 export const findFirst = async <T>({
@@ -51,6 +52,7 @@ export const findMany = async <T>({
   groupBy,
   orderBy,
   limit,
+  offset,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
@@ -60,6 +62,7 @@ export const findMany = async <T>({
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
   const limitClause = createLimitClause(limit)
+  const offsetClause = createOffsetClause(offset)
 
   const rows = await dbClient.query<T[]>(
     `SELECT ${fields} FROM ${tableName}
@@ -67,6 +70,7 @@ export const findMany = async <T>({
       ${groupByClause}
       ${orderByClause}
       ${limitClause}
+      ${offsetClause}
     `,
     params
   )
