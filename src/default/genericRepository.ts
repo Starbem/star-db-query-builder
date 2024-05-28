@@ -208,6 +208,8 @@ export const joins = async <T>({
   where,
   groupBy,
   orderBy,
+  limit,
+  offset,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
@@ -217,6 +219,8 @@ export const joins = async <T>({
   const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
   const groupByClause = createGroupByClause(groupBy)
   const orderByClause = createOrderByClause(orderBy)
+  const limitClause = createLimitClause(limit)
+  const offsetClause = createOffsetClause(offset)
 
   const queryBuilder: QueryBuilder = {
     select: [selectFields],
@@ -225,6 +229,8 @@ export const joins = async <T>({
     where: whereClause,
     groupBy: [groupByClause],
     orderBy: orderByClause,
+    limit: limitClause,
+    offset: offsetClause,
   }
 
   const queryString = await buildQuery(queryBuilder)
@@ -253,6 +259,14 @@ async function buildQuery(params: QueryBuilder): Promise<string> {
 
   if (params.orderBy) {
     queryString += `${params.orderBy}`
+  }
+
+  if (params.limit) {
+    queryString += `${params.limit}`
+  }
+
+  if (params.offset) {
+    queryString += `${params.offset}`
   }
 
   return queryString

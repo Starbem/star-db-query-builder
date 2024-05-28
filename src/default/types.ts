@@ -69,4 +69,6 @@ export interface QueryBuilder {
   where?: string
   groupBy?: string[]
   orderBy?: string
+  limit?: string
+  offset?: string
 }
