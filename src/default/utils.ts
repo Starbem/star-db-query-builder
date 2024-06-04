@@ -5,7 +5,7 @@ const arrayToStringWithQuotes = (
   clientType: DBClients
 ): string => {
   const itemsWithQuotes = items.map((item) =>
-    clientType === 'pg' ? `"${item}"` : `${item}`
+    clientType === 'pg' ? `${item}` : `${item}`
   )
   return itemsWithQuotes.join(', ')
 }
@@ -67,19 +67,19 @@ export const createWhereClause = <T>(
           if (operator === 'BETWEEN') {
             whereParts.push(
               clientType === 'pg'
-                ? `"${key}" ${operator} ${placeholders.replace(', ', ' AND ')}`
+                ? `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
                 : `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
             )
           } else if (operator === 'IN') {
             whereParts.push(
               clientType === 'pg'
-                ? `"${key}" ${operator} ${placeholders.replace(', ', ' AND ')}`
+                ? `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
                 : `${key} ${operator} (${placeholders})`
             )
           } else {
             whereParts.push(
               clientType === 'pg'
-                ? `"${key}" ${operator} (${placeholders})`
+                ? `${key} ${operator} (${placeholders})`
                 : `${key} ${operator} ${placeholders}`
             )
           }
@@ -87,7 +87,7 @@ export const createWhereClause = <T>(
         } else {
           whereParts.push(
             clientType === 'pg'
-              ? `"${key}" ${operator} ${pgPlaceholderGenerator(index++)}`
+              ? `${key} ${operator} ${pgPlaceholderGenerator(index++)}`
               : `${key} ${operator} ${mysqlPlaceholderGenerator()}`
           )
 
