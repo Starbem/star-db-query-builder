@@ -153,7 +153,7 @@ export const update = async <P, R>({
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
-      query += ` RETURNIN ${createSelectFields(returning, dbClient.clientType)}`
+      query += ` RETURNING ${createSelectFields(returning, dbClient.clientType)}`
     }
   }
 
