@@ -22,6 +22,7 @@ export declare function findMany<T>({
   groupBy,
   orderBy,
   limit,
+  offset,
 }: QueryParams<T>): Promise<T[]>
 
 export declare function insert<P, R>({
@@ -46,10 +47,14 @@ export declare function deleteOne<T>({
   permanently,
 }: QueryParams<T> & { permanently?: boolean }): Promise<void>
 
-// Services Methods
-export declare function getByUserAndSubscription<T>({
+export declare function joins<T>({
   tableName,
   dbClient,
   select,
+  joins,
   where,
-}: QueryParams<T>): Promise<T | null>
+  groupBy,
+  orderBy,
+  limit,
+  offset,
+}: QueryParams<T>): Promise<T[]>
