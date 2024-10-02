@@ -73,7 +73,7 @@ export const createWhereClause = <T>(
           } else if (operator === 'IN') {
             whereParts.push(
               clientType === 'pg'
-                ? `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
+                ? `${key} ${operator} (${placeholders})`
                 : `${key} ${operator} (${placeholders})`
             )
           } else {
@@ -125,11 +125,9 @@ export const createWhereClause = <T>(
       )
     }
   } else {
-    Object.entries(conditions).forEach(([key, value]) => {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error
-      processCondition(key, value)
-    })
+    Object.entries(conditions).forEach(([key, value]) =>
+      processCondition(key, value as Condition<T>)
+    )
   }
 
   if ('OR' in conditions || 'AND' in conditions) {
@@ -162,9 +160,7 @@ export const createWhereClause = <T>(
     }
   } else {
     Object.entries(conditions).forEach(([key, value]) => {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error
-      processCondition(key, value)
+      processCondition(key, value as Condition<T>)
     })
   }
 

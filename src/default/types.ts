@@ -9,6 +9,7 @@ type SimpleValue = string | number | boolean | Date
 
 export interface OperatorCondition {
   operator:
+    | 'ILIKE'
     | 'LIKE'
     | '='
     | '>'

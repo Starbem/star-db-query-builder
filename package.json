@@ -1,6 +1,6 @@
 {
   "name": "@starbemtech/star-db-query-builder",
-  "version": "1.0.23",
+  "version": "1.0.25",
   "description": "A query builder to be used with mysql or postgres",
   "author": "Julio Sousa <julio.sousa@starbem.app>",
   "main": "./dist/index.js",
@@ -49,6 +49,7 @@
     "typescript": "^5.4.3"
   },
   "dependencies": {
+    "@starbemtech/star-db-query-builder": "link:",
     "mysql2": "^3.9.3",
     "pg": "^8.11.3",
     "uuid": "^9.0.1"
