@@ -22,6 +22,8 @@ export interface OperatorCondition {
     | 'NOT IN'
     | 'LIKE'
     | 'NOT LIKE'
+    | 'IS NULL'
+    | 'IS NOT NULL'
   value: SimpleValue | SimpleValue[]
 }
 
