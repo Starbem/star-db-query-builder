@@ -55,7 +55,11 @@ export const createWhereClause = <T>(
     if (typeof condition === 'object' && condition !== null) {
       if ('operator' in condition && 'value' in condition) {
         const { operator, value } = condition
-        if (Array.isArray(value)) {
+        if (operator.includes('NULL')) {
+          whereParts.push(
+            clientType === 'pg' ? `${key} ${operator} ` : `${key} ${operator} `
+          )
+        } else if (Array.isArray(value)) {
           const placeholders = value
             .map(() =>
               clientType === 'pg'
