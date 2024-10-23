@@ -45,7 +45,8 @@ export const generateSetClause = (
 export const createWhereClause = <T>(
   conditions: Conditions<T> = {},
   startIndex = 1,
-  clientType: DBClients
+  clientType: DBClients,
+  unaccent?: boolean
 ): [string, any[], number] => {
   let index = startIndex
   const whereParts: string[] = []
@@ -56,9 +57,7 @@ export const createWhereClause = <T>(
       if ('operator' in condition && 'value' in condition) {
         const { operator, value } = condition
         if (operator.includes('NULL')) {
-          whereParts.push(
-            clientType === 'pg' ? `${key} ${operator} ` : `${key} ${operator} `
-          )
+          whereParts.push(`${key} ${operator}`)
         } else if (Array.isArray(value)) {
           const placeholders = value
             .map(() =>
@@ -70,31 +69,33 @@ export const createWhereClause = <T>(
 
           if (operator === 'BETWEEN') {
             whereParts.push(
-              clientType === 'pg'
-                ? `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
-                : `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
+              `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
             )
           } else if (operator === 'IN') {
-            whereParts.push(
-              clientType === 'pg'
-                ? `${key} ${operator} (${placeholders})`
-                : `${key} ${operator} (${placeholders})`
-            )
+            whereParts.push(`${key} ${operator} (${placeholders})`)
           } else {
-            whereParts.push(
-              clientType === 'pg'
-                ? `${key} ${operator} (${placeholders})`
-                : `${key} ${operator} ${placeholders}`
-            )
+            whereParts.push(`${key} ${operator} (${placeholders})`)
           }
           values.push(...value)
         } else {
-          whereParts.push(
-            clientType === 'pg'
-              ? `${key} ${operator} ${pgPlaceholderGenerator(index++)}`
-              : `${key} ${operator} ${mysqlPlaceholderGenerator()}`
-          )
-
+          if (unaccent && clientType === 'pg') {
+            if (operator.toUpperCase() === 'ILIKE') {
+              whereParts.push(
+                `unaccent(${key}::text) ILIKE unaccent(${pgPlaceholderGenerator(index)})`
+              )
+            } else {
+              whereParts.push(
+                `unaccent(${key}::text) ${operator} unaccent(${pgPlaceholderGenerator(index)})`
+              )
+            }
+          } else {
+            whereParts.push(
+              clientType === 'pg'
+                ? `${key} ${operator} ${pgPlaceholderGenerator(index)}`
+                : `${key} ${operator} ${mysqlPlaceholderGenerator()}`
+            )
+          }
+          index++
           values.push(value)
         }
       }
@@ -116,17 +117,15 @@ export const createWhereClause = <T>(
             const key = Object.keys(subCondition)[0]
             const condition = subCondition[key]
 
+            // Adiciona o tratamento de unaccent nas condições de JOINS
             processCondition(key, condition)
             return whereParts.pop()
           }
           return ''
         })
         .filter((part) => part)
-      whereParts.push(
-        clientType === 'pg'
-          ? `(${subWhereParts.join(` ${logicalOperator} `)})`
-          : `${subWhereParts.join(` ${logicalOperator} `)}`
-      )
+
+      whereParts.push(`(${subWhereParts.join(` ${logicalOperator} `)})`)
     }
   } else {
     Object.entries(conditions).forEach(([key, value]) =>
@@ -148,7 +147,7 @@ export const createWhereClause = <T>(
           ) {
             const key = Object.keys(subCondition)[0]
             const condition = subCondition[key]
-            processCondition(key, condition)
+            processCondition(key, condition) // Certifica que o unaccent é processado aqui também
             return whereParts.pop()
           }
 
@@ -156,21 +155,12 @@ export const createWhereClause = <T>(
         })
         .filter((part) => part)
 
-      whereParts.push(
-        clientType === 'pg'
-          ? `(${subWhereParts.join(` ${logicalOperator} `)})`
-          : `${subWhereParts.join(` ${logicalOperator} `)}`
-      )
+      whereParts.push(`(${subWhereParts.join(` ${logicalOperator} `)})`)
     }
-  } else {
-    Object.entries(conditions).forEach(([key, value]) => {
-      processCondition(key, value as Condition<T>)
-    })
   }
 
   const whereClause =
     whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : ''
-
   return [whereClause, values, index]
 }
 

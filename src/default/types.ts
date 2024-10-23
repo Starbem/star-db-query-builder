@@ -57,6 +57,7 @@ export interface QueryParams<T> {
   limit?: number
   offset?: number
   joins?: JoinClause[]
+  unaccent?: boolean
 }
 
 interface JoinClause {

@@ -7,7 +7,10 @@ import { DBClients } from '../default/types'
 
 let dbClient: IDatabaseClient | null = null
 
-export const initDb = <T>(config: { type: DBClients; options: T }): void => {
+export const initDb = async <T>(config: {
+  type: DBClients
+  options: T
+}): Promise<void> => {
   if (!config.type)
     throw new Error('Type is required. Accept values: pg | mysql')
 
@@ -15,7 +18,7 @@ export const initDb = <T>(config: { type: DBClients; options: T }): void => {
 
   if (config.type === 'pg') {
     const pool = new PgPool(config.options)
-    dbClient = createPgClient(pool)
+    dbClient = await createPgClient(pool)
 
     console.log(
       `@starbemtech/star-db-query-builder: Postgres db client created success`

@@ -53,12 +53,19 @@ export const findMany = async <T>({
   orderBy,
   limit,
   offset,
+  unaccent,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
 
   const fields = createSelectFields(select, dbClient.clientType)
-  const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
+  const [whereClause, params] = createWhereClause(
+    where,
+    1,
+    dbClient.clientType,
+    unaccent
+  )
+
   const orderByClause = createOrderByClause(orderBy)
   const groupByClause = createGroupByClause(groupBy)
   const limitClause = createLimitClause(limit)
@@ -115,7 +122,7 @@ export const insert = async <P, R>({
   const inserted = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows = await dbClient.query<R>(
+    const rows = await dbClient.query<R[]>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
@@ -160,7 +167,7 @@ export const update = async <P, R>({
   const updated = await dbClient.query<R[]>(query, values)
 
   if (dbClient.clientType === 'mysql') {
-    const rows = await dbClient.query<R>(
+    const rows = await dbClient.query<R[]>(
       `SELECT ${
         returning && returning.length > 0
           ? createSelectFields(returning, dbClient.clientType)
@@ -210,13 +217,19 @@ export const joins = async <T>({
   orderBy,
   limit,
   offset,
+  unaccent,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
 
   const fields = Array.isArray(select) ? select : []
   const selectFields = createSelectFields(fields, dbClient.clientType)
-  const [whereClause, params] = createWhereClause(where, 1, dbClient.clientType)
+  const [whereClause, params] = createWhereClause(
+    where,
+    1,
+    dbClient.clientType,
+    unaccent
+  )
   const groupByClause = createGroupByClause(groupBy)
   const orderByClause = createOrderByClause(orderBy)
   const limitClause = createLimitClause(limit)
