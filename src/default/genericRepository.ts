@@ -207,6 +207,35 @@ export const deleteOne = async <T>({
   )
 }
 
+export const deleteMany = async <T>({
+  tableName,
+  dbClient,
+  ids,
+  field = 'id',
+  permanently = false,
+}: QueryParams<T> & {
+  ids: string[] | number[]
+  field?: string
+  permanently?: boolean
+}): Promise<void> => {
+  if (!tableName) throw new Error('Table name is required')
+  if (!dbClient) throw new Error('DB client is required')
+  if (!ids || ids.length === 0)
+    throw new Error('IDs are required and cannot be empty')
+  if (!field) throw new Error('Field is required')
+
+  const placeholders =
+    dbClient.clientType === 'pg'
+      ? ids.map((_, index) => `$${index + 1}`).join(', ')
+      : ids.map(() => '?').join(', ')
+
+  const query = permanently
+    ? `DELETE FROM ${tableName} WHERE ${field} IN (${placeholders})`
+    : `UPDATE ${tableName} SET status = 'deleted' WHERE ${field} IN (${placeholders})`
+
+  await dbClient.query(query, ids)
+}
+
 export const joins = async <T>({
   tableName,
   dbClient,
