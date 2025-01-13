@@ -194,7 +194,7 @@ export const deleteOne = async <T>({
   if (!tableName) throw new Error('Table name is required')
   if (!dbClient) throw new Error('DB client is required')
   if (!id) throw new Error('ID is required')
-  console.info('DELETE ONE')
+
   await dbClient.query(
     permanently
       ? `DELETE FROM ${tableName} WHERE id = ${
