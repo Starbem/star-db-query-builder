@@ -95,7 +95,12 @@ export const insert = async <P, R>({
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
 
-  const keys = Object.keys(data)
+  const keys =
+    dbClient.clientType === 'pg'
+      ? Object.keys(data).map((key) =>
+          key === 'authorization' ? `"${key}"` : key
+        )
+      : Object.keys(data)
   const values = Object.values(data)
 
   keys.unshift('id')
