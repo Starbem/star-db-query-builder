@@ -56,7 +56,10 @@ export const createWhereClause = <T>(
     if (typeof condition === 'object' && condition !== null) {
       if ('operator' in condition && 'value' in condition) {
         const { operator, value } = condition
-        if (operator.includes('NULL')) {
+
+        if (operator === 'NOT EXISTS' && typeof value === 'string') {
+          whereParts.push(`NOT EXISTS (${value})`)
+        } else if (operator.includes('NULL')) {
           whereParts.push(`${key} ${operator}`)
         } else if (Array.isArray(value)) {
           const placeholders = value
