@@ -24,6 +24,7 @@ export interface OperatorCondition {
     | 'NOT LIKE'
     | 'IS NULL'
     | 'IS NOT NULL'
+    | 'NOT EXISTS'
   value: SimpleValue | SimpleValue[]
 }
 
@@ -35,6 +36,7 @@ interface LogicalCondition<T> {
   OR?: Conditions<T>[]
   AND?: Conditions<T>[]
   JOINS?: Conditions<object>
+  notExists?: OperatorCondition
 }
 
 export type Conditions<T> = {
