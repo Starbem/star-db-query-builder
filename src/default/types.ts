@@ -1,5 +1,13 @@
 import { IDatabaseClient } from '../db/IDatabaseClient'
 
+export interface RetryOptions {
+  retries?: number
+  factor?: number
+  minTimeout?: number
+  maxTimeout?: number
+  randomize?: boolean
+}
+
 export interface QueryExec {
   text: string
   values?: any[]

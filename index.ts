@@ -9,7 +9,7 @@ export * from './src/db/initDb'
 export * from './src/default/genericRepository'
 
 // Services Repository
-export * from './src/services/payment'
+// export * from './src/services/payment'
 
 // Types Definition
 export type { PgPoolConfig, MySqlPoolOptions, TypeConditions }
