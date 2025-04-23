@@ -45,9 +45,12 @@ async function ensureUnaccentExtension(pool: Pool): Promise<void> {
 export const createPgClient = async (
   pool: Pool,
   retryOptions?: RetryOptions,
-  poolConfig?: PoolConfig
+  poolConfig?: PoolConfig,
+  installUnaccentExtension?: boolean
 ): Promise<IDatabaseClient> => {
-  await ensureUnaccentExtension(pool)
+  if (installUnaccentExtension) {
+    await ensureUnaccentExtension(pool)
+  }
 
   monitor.emit(MonitorEvents.CONNECTION_CREATED, {
     clientType: 'pg',
