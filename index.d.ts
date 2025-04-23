@@ -2,7 +2,7 @@ import { IDatabaseClient } from './src/db/IDatabaseClient'
 import { DBClients, QueryParams } from './src/default/types'
 
 export declare function initDb<T>(config: { type: DBClients; options: T }): void
-export declare function getDbClient(): IDatabaseClient
+export declare function getDbClient(name?: string): IDatabaseClient
 
 // Generic Methods
 export declare function findFirst<T>({

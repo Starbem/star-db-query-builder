@@ -6,12 +6,14 @@ import { IDatabaseClient } from './IDatabaseClient'
 import { DBClients, RetryOptions } from '../default/types'
 
 const dbClients: Record<string, IDatabaseClient> = {}
+const defaultName = 'default'
 
 export const initDb = async <T>(config: {
-  name: string
+  name?: string
   type: DBClients
   options: T
   retryOptions?: RetryOptions
+  installUnaccentExtension?: boolean
 }): Promise<void> => {
   if (!config.type)
     throw new Error('Type is required. Accept values: pg | mysql')
@@ -21,10 +23,11 @@ export const initDb = async <T>(config: {
   if (config.type === 'pg') {
     const poolConfig = config.options as unknown as PoolConfig
     const pool = new Pool(config.options)
-    dbClients[config.name] = await createPgClient(
+    dbClients[config.name || defaultName] = await createPgClient(
       pool,
       config.retryOptions,
-      poolConfig
+      poolConfig,
+      config.installUnaccentExtension
     )
 
     console.log(
@@ -32,7 +35,10 @@ export const initDb = async <T>(config: {
     )
   } else if (config.type === 'mysql') {
     const pool = createMySqlPool(config.options)
-    dbClients[config.name] = createMysqlClient(pool, config.retryOptions)
+    dbClients[config.name || defaultName] = createMysqlClient(
+      pool,
+      config.retryOptions
+    )
 
     console.info(
       `@starbemtech/star-db-query-builder: Postgres db client "${config.name}" created successfully`
@@ -42,8 +48,8 @@ export const initDb = async <T>(config: {
   }
 }
 
-export const getDbClient = (name: string): IDatabaseClient => {
-  const client = dbClients[name]
+export const getDbClient = (name?: string): IDatabaseClient => {
+  const client = dbClients[name || defaultName]
   if (!client) {
     throw new Error(`Database client "${name}" is not initialized`)
   }
