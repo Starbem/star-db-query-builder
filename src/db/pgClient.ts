@@ -6,10 +6,46 @@ import { monitor, MonitorEvents } from '../monitor/monitor'
 
 const transientErrorCodes = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'])
 
+/**
+ * Checks if the given error is a transient error that can be retried
+ *
+ * Transient errors are temporary network or connection issues that typically
+ * resolve themselves and can be safely retried. This function checks if the
+ * error code matches known transient error patterns for PostgreSQL connections.
+ *
+ * @param error - The error object to check
+ * @returns boolean - True if the error is transient and can be retried, false otherwise
+ *
+ * @example
+ * try {
+ *   const result = await pool.query(sql, params);
+ * } catch (error) {
+ *   if (isTransientError(error)) {
+ *     // Retry the operation
+ *     console.log('Transient error detected, retrying...');
+ *   } else {
+ *     // Handle permanent error
+ *     throw error;
+ *   }
+ * }
+ */
 function isTransientError(error: any): boolean {
   return error && error.code && transientErrorCodes.has(error.code)
 }
 
+/**
+ * Ensures that the unaccent extension is installed in the PostgreSQL database
+ *
+ * This function checks if the unaccent extension is installed in the database
+ * and installs it if it is not. It also emits a connection created event to
+ * the monitor.
+ *
+ * @param pool - The PostgreSQL pool instance
+ * @returns Promise<void> - Resolves when the unaccent extension is installed or already exists
+ *
+ * @example
+ * await ensureUnaccentExtension(pool);
+ */
 async function ensureUnaccentExtension(pool: Pool): Promise<void> {
   try {
     const checkResult = await pool.query(`
@@ -42,6 +78,27 @@ async function ensureUnaccentExtension(pool: Pool): Promise<void> {
   }
 }
 
+/**
+ * Creates a PostgreSQL database client
+ *
+ * This function initializes a PostgreSQL database client with the provided pool configuration
+ * and optional retry options. It sets up monitoring for connection events and query operations.
+ *
+ * @param pool - The PostgreSQL pool instance
+ * @param retryOptions - Optional retry options for failed queries
+ * @param poolConfig - Optional pool configuration
+ * @param installUnaccentExtension - Optional flag to install unaccent extension
+ * @returns IDatabaseClient - The PostgreSQL database client instance
+ *
+ * @example
+ * const pgClient = await createPgClient(pool, { retries: 3, factor: 2, minTimeout: 1000 });
+ *
+ * @example
+ * const pgClient = await createPgClient(pool, { retries: 3, factor: 2, minTimeout: 1000 });
+ *
+ * @example
+ * const pgClient = await createPgClient(pool, { retries: 3, factor: 2, minTimeout: 1000 });
+ */
 export const createPgClient = async (
   pool: Pool,
   retryOptions?: RetryOptions,

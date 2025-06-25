@@ -11,6 +11,39 @@ import {
   createOffsetClause,
 } from './utils'
 
+/**
+ * Finds the first record in the specified table
+ *
+ * This function retrieves the first record from the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template T - The type of the record to be returned
+ * @param params - Query parameters including table name, database client, select fields, where conditions, group by, order by, and limit
+ * @returns Promise<T | null> - The first record or null if no record is found
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ *
+ * @example
+ * const firstRecord = await findFirst({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   select: ['id', 'name', 'email'],
+ *   where: { status: 'active' },
+ *   groupBy: ['status'],
+ *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
+ * })
+ *
+ * @example
+ * const firstRecord = await findFirst({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   select: ['id', 'name', 'email'],
+ *   where: { status: 'active' },
+ *   groupBy: ['status'],
+ *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
+ * })
+ */
 export const findFirst = async <T>({
   tableName,
   dbClient,
@@ -44,6 +77,32 @@ export const findFirst = async <T>({
   return rows[0] || null
 }
 
+/**
+ * Finds multiple records in the specified table
+ *
+ * This function retrieves multiple records from the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template T - The type of the records to be returned
+ * @param params - Query parameters including table name, database client, select fields, where conditions, group by, order by, limit, and offset
+ * @returns Promise<T[]> - The records found in the table
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ *
+ * @example
+ * const records = await findMany({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   select: ['id', 'name', 'email'],
+ *   where: { status: 'active' },
+ *   groupBy: ['status'],
+ *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
+ *   limit: 10,
+ *   offset: 0,
+ *   unaccent: true,
+ * })
+ */
 export const findMany = async <T>({
   tableName,
   dbClient,
@@ -85,6 +144,29 @@ export const findMany = async <T>({
   return rows || []
 }
 
+/**
+ * Inserts a new record into the specified table
+ *
+ * This function inserts a new record into the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template P - The type of the data to be inserted
+ * @template R - The type of the record to be returned
+ * @param params - Query parameters including table name, database client, data to be inserted, and optional returning fields
+ * @returns Promise<R> - The inserted record
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When data object is not provided
+ *
+ * @example
+ * const insertedRecord = await insert({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   data: { name: 'John Doe', email: 'john.doe@example.com' },
+ *   returning: ['id', 'name', 'email'],
+ * })
+ */
 export const insert = async <P, R>({
   tableName,
   dbClient,
@@ -145,6 +227,29 @@ export const insert = async <P, R>({
   return inserted[0]
 }
 
+/**
+ * Inserts multiple records into the specified table
+ *
+ * This function inserts multiple records into the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template P - The type of the data to be inserted
+ * @template R - The type of the record to be returned
+ * @param params - Query parameters including table name, database client, data to be inserted, and optional returning fields
+ * @returns Promise<R[]> - The inserted records
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When data array is not provided or empty
+ *
+ * @example
+ * const insertedRecords = await insertMany({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   data: [{ name: 'John Doe', email: 'john.doe@example.com' }, { name: 'Jane Doe', email: 'jane.doe@example.com' }],
+ *   returning: ['id', 'name', 'email'],
+ * })
+ */
 export const insertMany = async <P, R>({
   tableName,
   dbClient,
@@ -227,6 +332,30 @@ export const insertMany = async <P, R>({
   return inserted
 }
 
+/**
+ * Updates a record in the specified table
+ *
+ * This function updates a record in the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template P - The type of the data to be updated
+ * @template R - The type of the record to be returned
+ * @param params - Query parameters including table name, database client, ID of the record to be updated, data to be updated, and optional returning fields
+ * @returns Promise<R | void> - The updated record or void if no record is found
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When ID is not provided
+ *
+ * @example
+ * const updatedRecord = await update({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   id: '123',
+ *   data: { name: 'John Doe', email: 'john.doe@example.com' },
+ *   returning: ['id', 'name', 'email'],
+ * })
+ */
 export const update = async <P, R>({
   tableName,
   dbClient,
@@ -272,6 +401,31 @@ export const update = async <P, R>({
   return updated[0]
 }
 
+/**
+ * Updates multiple records in the specified table
+ *
+ * This function updates multiple records in the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template P - The type of the data to be updated
+ * @template R - The type of the record to be returned
+ * @param params - Query parameters including table name, database client, data to be updated, where conditions, and optional returning fields
+ * @returns Promise<R[]> - The updated records
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When data object is not provided
+ * @throws {Error} When where condition is not provided
+ *
+ * @example
+ * const updatedRecords = await updateMany({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   data: { name: 'John Doe', email: 'john.doe@example.com' },
+ *   where: { status: 'active' },
+ *   returning: ['id', 'name', 'email'],
+ * })
+ */
 export const updateMany = async <P, R>({
   tableName,
   dbClient,
@@ -331,6 +485,28 @@ export const updateMany = async <P, R>({
   return updated
 }
 
+/**
+ * Deletes a record from the specified table
+ *
+ * This function deletes a record from the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template T - The type of the record to be deleted
+ * @param params - Query parameters including table name, database client, ID of the record to be deleted, and optional permanently flag
+ * @returns Promise<void> - Resolves when the record is deleted
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When ID is not provided
+ *
+ * @example
+ * await deleteOne({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   id: '123',
+ *   permanently: true,
+ * })
+ */
 export const deleteOne = async <T>({
   tableName,
   dbClient,
@@ -353,6 +529,30 @@ export const deleteOne = async <T>({
   )
 }
 
+/**
+ * Deletes multiple records from the specified table
+ *
+ * This function deletes multiple records from the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template T - The type of the record to be deleted
+ * @param params - Query parameters including table name, database client, IDs of the records to be deleted, field to be used for deletion, and optional permanently flag
+ * @returns Promise<void> - Resolves when the records are deleted
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When IDs are not provided or empty
+ * @throws {Error} When field is not provided
+ *
+ * @example
+ * await deleteMany({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   ids: ['123', '456', '789'],
+ *   field: 'id',
+ *   permanently: true,
+ * })
+ */
 export const deleteMany = async <T>({
   tableName,
   dbClient,
@@ -382,6 +582,35 @@ export const deleteMany = async <T>({
   await dbClient.query(query, ids)
 }
 
+/**
+ * Joins multiple tables in the specified table
+ *
+ * This function joins multiple tables in the specified table based on the provided
+ * query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @template T - The type of the record to be joined
+ * @param params - Query parameters including table name, database client, select fields, joins, where conditions, group by, order by, limit, and offset
+ * @returns Promise<T[]> - The records found in the joined tables
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When select fields are not provided
+ * @throws {Error} When joins are not provided
+ *
+ * @example
+ * const records = await joins({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   select: ['id', 'name', 'email'],
+ *   joins: [{ type: 'INNER', table: 'orders', on: 'users.id = orders.user_id' }],
+ *   where: { status: 'active' },
+ *   groupBy: ['status'],
+ *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
+ *   limit: 10,
+ *   offset: 0,
+ *   unaccent: true,
+ * })
+ */
 export const joins = async <T>({
   tableName,
   dbClient,
@@ -428,6 +657,26 @@ export const joins = async <T>({
   return rows
 }
 
+/**
+ * Builds a query string from the provided query parameters
+ *
+ * This function builds a query string from the provided query parameters. It constructs the SQL query, executes it, and returns the result.
+ *
+ * @param params - Query parameters including select fields, from table, joins, where conditions, group by, order by, limit, and offset
+ * @returns Promise<string> - The query string
+ *
+ * @example
+ * const queryString = await buildQuery({
+ *   select: ['id', 'name', 'email'],
+ *   from: 'users',
+ *   joins: [{ type: 'INNER', table: 'orders', on: 'users.id = orders.user_id' }],
+ *   where: { status: 'active' },
+ *   groupBy: ['status'],
+ *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
+ *   limit: 10,
+ *   offset: 0,
+ * })
+ */
 async function buildQuery(params: QueryBuilder): Promise<string> {
   let queryString = `SELECT ${params.select.join(', ')} FROM ${params.from}`
 
