@@ -1,5 +1,13 @@
 import { IDatabaseClient } from '../db/IDatabaseClient'
 
+export interface RetryOptions {
+  retries?: number
+  factor?: number
+  minTimeout?: number
+  maxTimeout?: number
+  randomize?: boolean
+}
+
 export interface QueryExec {
   text: string
   values?: any[]
@@ -9,6 +17,7 @@ type SimpleValue = string | number | boolean | Date
 
 export interface OperatorCondition {
   operator:
+    | 'ILIKE'
     | 'LIKE'
     | '='
     | '>'
@@ -21,6 +30,9 @@ export interface OperatorCondition {
     | 'NOT IN'
     | 'LIKE'
     | 'NOT LIKE'
+    | 'IS NULL'
+    | 'IS NOT NULL'
+    | 'NOT EXISTS'
   value: SimpleValue | SimpleValue[]
 }
 
@@ -32,6 +44,7 @@ interface LogicalCondition<T> {
   OR?: Conditions<T>[]
   AND?: Conditions<T>[]
   JOINS?: Conditions<object>
+  notExists?: OperatorCondition
 }
 
 export type Conditions<T> = {
@@ -54,6 +67,7 @@ export interface QueryParams<T> {
   limit?: number
   offset?: number
   joins?: JoinClause[]
+  unaccent?: boolean
 }
 
 interface JoinClause {

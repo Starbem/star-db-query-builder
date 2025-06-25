@@ -8,8 +8,8 @@ export * from './src/db/initDb'
 // Generic Repository
 export * from './src/default/genericRepository'
 
-// Services Repository
-export * from './src/services/payment'
+// Monitor
+export * from './src/monitor/monitor'
 
 // Types Definition
 export type { PgPoolConfig, MySqlPoolOptions, TypeConditions }
