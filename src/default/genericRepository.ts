@@ -145,6 +145,88 @@ export const insert = async <P, R>({
   return inserted[0]
 }
 
+export const insertMany = async <P, R>({
+  tableName,
+  dbClient,
+  data,
+  returning,
+}: QueryParams<R> & { data: P[]; returning?: string[] }): Promise<R[]> => {
+  if (!tableName) throw new Error('Table name is required')
+  if (!dbClient) throw new Error('DB client is required')
+  if (!data || data.length === 0)
+    throw new Error('Data array is required and cannot be empty')
+
+  const firstItem = data[0] as Record<string, any>
+  const keys =
+    dbClient.clientType === 'pg'
+      ? Object.keys(firstItem).map((key) =>
+          key === 'authorization' ? `"${key}"` : key
+        )
+      : Object.keys(firstItem)
+
+  const allKeys = ['id', ...keys, 'updated_at']
+
+  let query = `INSERT INTO ${tableName} (${allKeys.join(', ')}) VALUES `
+
+  const allValues: any[] = []
+  const valueRows: string[] = []
+  const generatedIds: string[] = []
+
+  data.forEach((item, rowIndex) => {
+    const values = Object.values(item as Record<string, any>)
+    const generatedUUID: string = uuid()
+    generatedIds.push(generatedUUID)
+    const currentValues = [generatedUUID, ...values, new Date()]
+
+    allValues.push(...currentValues)
+
+    // Generate unique placeholders for each row
+    if (dbClient.clientType === 'pg') {
+      const startIndex = rowIndex * allKeys.length + 1
+      const placeholders = allKeys
+        .map((_, index) => `$${startIndex + index}`)
+        .join(', ')
+      valueRows.push(`(${placeholders})`)
+    } else {
+      const placeholders = allKeys.map(() => '?').join(', ')
+      valueRows.push(`(${placeholders})`)
+    }
+  })
+
+  query += valueRows.join(', ')
+
+  if (dbClient.clientType === 'pg') {
+    if (returning && returning.length > 0) {
+      query += ` RETURNING ${createSelectFields(
+        returning,
+        dbClient.clientType
+      )}`
+    }
+  }
+
+  const inserted = await dbClient.query<R[]>(query, allValues)
+
+  if (dbClient.clientType === 'mysql') {
+    const placeholders = generatedIds.map(() => '?').join(', ')
+
+    const rows = await dbClient.query<R[]>(
+      `SELECT ${
+        returning && returning.length > 0
+          ? createSelectFields(returning, dbClient.clientType)
+          : '*'
+      } FROM ${tableName}
+        WHERE id IN (${placeholders})
+        ORDER BY FIELD(id, ${placeholders})
+      `,
+      [...generatedIds, ...generatedIds]
+    )
+
+    return rows
+  }
+
+  return inserted
+}
+
 export const update = async <P, R>({
   tableName,
   dbClient,
@@ -188,6 +270,65 @@ export const update = async <P, R>({
   }
 
   return updated[0]
+}
+
+export const updateMany = async <P, R>({
+  tableName,
+  dbClient,
+  data,
+  where,
+  returning,
+}: QueryParams<R> & { data: P; returning?: string[] }): Promise<R[]> => {
+  if (!tableName) throw new Error('Table name is required')
+  if (!dbClient) throw new Error('DB client is required')
+  if (!data) throw new Error('Data object is required')
+  if (!where) throw new Error('Where condition is required')
+
+  const keys = Object.keys(data)
+  const values: any[] = Object.values(data)
+
+  // Generate SET clause with correct placeholders
+  const setClause = keys
+    .map((key, index) =>
+      dbClient.clientType === 'pg' ? `${key} = $${index + 1}` : `${key} = ?`
+    )
+    .join(', ')
+
+  // Generate WHERE clause with placeholders starting after SET values
+  const [whereClause, whereParams] = createWhereClause(
+    where,
+    values.length + 1,
+    dbClient.clientType
+  )
+
+  let query = `UPDATE ${tableName} SET ${setClause} ${whereClause}`
+
+  if (dbClient.clientType === 'pg') {
+    if (returning && returning.length > 0) {
+      query += ` RETURNING ${createSelectFields(returning, dbClient.clientType)}`
+    }
+  }
+
+  const updated = await dbClient.query<R[]>(query, [...values, ...whereParams])
+
+  if (dbClient.clientType === 'mysql') {
+    // For MySQL, we need to fetch the updated records separately
+    // since MySQL doesn't support RETURNING clause
+    const rows = await dbClient.query<R[]>(
+      `SELECT ${
+        returning && returning.length > 0
+          ? createSelectFields(returning, dbClient.clientType)
+          : '*'
+      } FROM ${tableName}
+        ${whereClause}
+      `,
+      whereParams
+    )
+
+    return rows
+  }
+
+  return updated
 }
 
 export const deleteOne = async <T>({
