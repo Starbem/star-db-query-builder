@@ -55,7 +55,6 @@ export type DBClients = 'pg' | 'mysql'
 
 export type OrderBy = { field: string; direction: 'ASC' | 'DESC' }[]
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export interface QueryParams<T> {
   tableName: string
   dbClient: IDatabaseClient

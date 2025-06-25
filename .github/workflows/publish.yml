@@ -1,0 +1,118 @@
+name: Publish to NPM
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.6.2
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: |
+          pnpm install
+
+      - name: Run linting
+        run: |
+          pnpm run lint
+
+      - name: Run tests
+        run: |
+          pnpm run test:ci
+
+      - name: Build package
+        run: |
+          pnpm run build
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.6.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: |
+          pnpm install
+
+      - name: Build package
+        run: |
+          pnpm run build
+
+      - name: Publish to NPM
+        run: |
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: |
+            ## 🚀 New Release: ${{ github.ref }}
+
+            ### 📦 Published to NPM
+            Package: `star-db-query-builder@${{ github.ref_name }}`
+
+            ### 🔗 Links
+            - [NPM Package](https://www.npmjs.com/package/@starbemtech/star-db-query-builder)
+            - [Documentation](https://github.com/starbem/star-db-query-builder#readme)
+
+            ### 📋 What's Changed
+            ${{ github.event.head_commit.message }}
+
+            ### 🏗️ Build Info
+            - Node.js Version: 20
+            - Build Date: ${{ github.event.head_commit.timestamp }}
+            - Commit: ${{ github.sha }}
+
+            ### 📥 Installation
+            ```bash
+            npm install star-db-query-builder@${{ github.ref_name }}
+            ```
+
+            ### 🔍 Changelog
+            Check the [CHANGELOG.md](https://github.com/starbem/star-db-query-builder/blob/main/CHANGELOG.md) for detailed changes.
+          draft: false
+          prerelease: false

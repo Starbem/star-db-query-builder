@@ -1,5 +1,8 @@
 import { EventEmitter } from 'stream'
 
+/**
+ * Monitor events
+ */
 export enum MonitorEvents {
   CONNECTION_CREATED = 'connection_created',
   QUERY_START = 'query_start',

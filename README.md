@@ -1,385 +1,809 @@
-# NodeJS Star DB Query Builder
+# 🚀 Star DB Query Builder
 
-🎉 Welcome to the NodeJS Database Library! This library provides a set of robust methods to interact with your database seamlessly. With TypeScript support, it ensures type safety and great developer experience.
+[![npm version](https://badge.fury.io/js/@starbemtech%2Fstar-db-query-builder.svg)](https://badge.fury.io/js/@starbemtech%2Fstar-db-query-builder)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8%2B-blue.svg)](https://www.typescriptlang.org/)
 
-## Features
+> **A robust and type-safe TypeScript library for building SQL queries with PostgreSQL and MySQL support**
 
-- **Multi-Connection Support:** Simultaneously connect to multiple MySQL and PostgreSQL databases.
-- **Automatic Retry:** Automatically retries queries in case of transient errors (e.g. connection loss or timeouts).
-- **External Configuration:** Customize connection pool settings and retry parameters through external configuration.
-- **Monitoring and Logging:** Emits events during the connection and query lifecycle, making it easier to integrate with your logging and monitoring systems.
+## 📋 Table of Contents
 
-## Installation
+- [Features](#-features)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+- [API Reference](#-api-reference)
+- [Practical Examples](#-practical-examples)
+- [Advanced Use Cases](#-advanced-use-cases)
+- [Monitoring](#-monitoring)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+## ✨ Features
+
+### 🔧 **Core Functionality**
+
+- **🔄 Multi-Connection Support**: Connect simultaneously to multiple PostgreSQL and MySQL databases
+- **🛡️ Type Safety**: Complete TypeScript support with strong typing
+- **⚡ Auto Retry**: Automatic retry for transient errors (timeouts, lost connections)
+- **📊 Monitoring**: Event system for monitoring and logging
+- **🔍 Query Builder**: Fluent interface for building complex queries
+- **📦 Batch Operations**: Optimized batch operations (insertMany, updateMany)
+
+### 🗄️ **Database Support**
+
+- **PostgreSQL**: Complete support with extensions (unaccent)
+- **MySQL**: Full compatibility with MySQL 5.7+
+- **Connection Pooling**: Efficient connection management
+- **Transaction Support**: Transaction support
+
+### 🛠️ **Development Tools**
+
+- **ESLint + Prettier**: Clean and consistent code
+- **Jest**: Unit and integration tests
+- **Husky**: Git hooks for code quality
+- **TypeScript**: Compilation and typing
+
+## 📦 Installation
 
 ```bash
-// Use npm
-$ npm install star-db-query-builder
+# NPM
+npm install @starbemtech/star-db-query-builder
 
-// Use yarn
-$ yarn add star-db-query-builder
+# Yarn
+yarn add @starbemtech/star-db-query-builder
 
-// Use pnpm
-$ pnpm install star-db-query-builder
+# PNPM
+pnpm add @starbemtech/star-db-query-builder
 ```
 
-## Usage
+## 🚀 Quick Start
 
-### Initialization
-
-First, initialize the database with the appropriate configuration.
+### 1. Initial Configuration
 
 ```typescript
-import { initDb, getDbClient, PoolConfig } from 'star-db-query-builder';
+import { initDb, getDbClient } from '@starbemtech/star-db-query-builder'
 
-// Use PostgresSQL
-const pgPoolOptions: PoolConfig = {
-  host: process.env.PG_HOST,
-  user: process.env.PG_USER,
-  password: process.env.PG_PASS,
-  database: process.env.PG_DB,
-  // OR
-  connectionURL: 'YOUR POSTGRES CONNECTION URL'
-  max: Number(process.env.PG_POOL_MAX) || 10,
-  connectionTimeoutMillis: Number(process.env.PG_CONN_TIMEOUT) || 0,
-  // Other pool options as needed
-}
-
-initDb({
-  name: 'pg-prod',
+// Configure PostgreSQL
+await initDb({
+  name: 'postgres-main',
   type: 'pg',
-  options: pgPoolOptions,
+  options: {
+    host: process.env.PG_HOST,
+    user: process.env.PG_USER,
+    password: process.env.PG_PASS,
+    database: process.env.PG_DB,
+    max: 20,
+    connectionTimeoutMillis: 5000,
+  },
   retryOptions: {
     retries: 3,
     factor: 2,
     minTimeout: 1000,
-    // Other retry parameters if needed
-  }
-});
+  },
+  installUnaccentExtension: true, // For accent-insensitive search
+})
 
-// User MySQL
-initDb({
-  name: 'mysql-prod',
+// Configure MySQL
+await initDb({
+  name: 'mysql-analytics',
   type: 'mysql',
   options: {
     host: process.env.MYSQL_HOST,
     user: process.env.MYSQL_USER,
     password: process.env.MYSQL_PASS,
     database: process.env.MYSQL_DB,
-    connectionLimit: Number(process.env.MYSQL_CONN_LIMIT) || 10,
-    // OR
-    url: 'YOUR MYSQL CONNECTION URL'
-    // Other pool options as needed
+    connectionLimit: 10,
   },
   retryOptions: {
     retries: 3,
     factor: 2,
     minTimeout: 1000,
-    // Other retry parameters if needed
-  }
-});
-
-// In your service, create an instance of getDbClient
-const dbClient = getDbClient('pg-prod');
-```
-
-### Methods
-
-#### findFirst
-
-Retrieve the first matching record from a table.
-
-```typescript
-import { findFirst } from 'star-db-query-builder'
-
-const result = await findFirst({
-  tableName: 'users',
-  dbClient,
-  select: ['id', 'name', 'email'],
-  where: {
-    id: { operator: '=', value: 1 },
   },
 })
 
-console.log(result)
+// Get database client
+const pgClient = getDbClient('postgres-main')
+const mysqlClient = getDbClient('mysql-analytics')
 ```
 
-#### findMany
-
-Retrieve multiple records from a table.
+### 2. First Query
 
 ```typescript
-import { findMany } from 'star-db-query-builder'
+import { findFirst, findMany } from '@starbemtech/star-db-query-builder'
 
-const results = await findMany({
+// Find specific user
+const user = await findFirst({
   tableName: 'users',
-  dbClient,
+  dbClient: pgClient,
+  select: ['id', 'name', 'email', 'created_at'],
+  where: {
+    email: { operator: '=', value: 'user@example.com' },
+    status: { operator: '=', value: 'active' },
+  },
+})
+
+// Find multiple users
+const activeUsers = await findMany({
+  tableName: 'users',
+  dbClient: pgClient,
   select: ['id', 'name', 'email'],
   where: {
-    status: { operator: '= ', value: 'active' },
+    status: { operator: '=', value: 'active' },
+    created_at: { operator: '>=', value: new Date('2024-01-01') },
   },
+  orderBy: [{ field: 'created_at', direction: 'DESC' }],
   limit: 10,
   offset: 0,
 })
-
-console.log(results)
 ```
 
-#### insert
+## ⚙️ Configuration
 
-Insert a new record into a table.
+### PostgreSQL Connection Options
 
 ```typescript
-import { insert } from 'star-db-query-builder'
+interface PgPoolConfig {
+  host: string
+  port?: number
+  user: string
+  password: string
+  database: string
+  max?: number // Maximum connections in pool
+  connectionTimeoutMillis?: number
+  idleTimeoutMillis?: number
+  ssl?: boolean | object
+  // ... other node-postgres options
+}
+```
 
-const newUser = { name: 'John Doe', email: 'john@example.com' }
+### MySQL Connection Options
 
-const insertedUser = await insert({
+```typescript
+interface MySqlPoolOptions {
+  host: string
+  port?: number
+  user: string
+  password: string
+  database: string
+  connectionLimit?: number
+  acquireTimeout?: number
+  timeout?: number
+  // ... other mysql2 options
+}
+```
+
+### Retry Options
+
+```typescript
+interface RetryOptions {
+  retries?: number // Number of attempts (default: 3)
+  factor?: number // Exponential factor (default: 2)
+  minTimeout?: number // Minimum time between attempts (ms)
+  maxTimeout?: number // Maximum time between attempts (ms)
+  randomize?: boolean // Add randomness (default: true)
+}
+```
+
+## 📚 API Reference
+
+### 🔍 **Read Operations**
+
+#### `findFirst<T>(params)`
+
+Returns the first record that matches the criteria.
+
+```typescript
+const user = await findFirst<User>({
   tableName: 'users',
   dbClient,
-  data: newUser,
+  select: ['id', 'name', 'email'],
+  where: {
+    id: { operator: '=', value: 'uuid-here' },
+  },
+})
+```
+
+#### `findMany<T>(params)`
+
+Returns multiple records with pagination and ordering.
+
+```typescript
+const users = await findMany<User>({
+  tableName: 'users',
+  dbClient,
+  select: ['id', 'name', 'email'],
+  where: {
+    status: { operator: '=', value: 'active' },
+  },
+  orderBy: [
+    { field: 'created_at', direction: 'DESC' },
+    { field: 'name', direction: 'ASC' },
+  ],
+  limit: 20,
+  offset: 40,
+  groupBy: ['status'],
+})
+```
+
+### ✏️ **Write Operations**
+
+#### `insert<P, R>(params)`
+
+Inserts a new record and returns the inserted data.
+
+```typescript
+const newUser = await insert<UserData, User>({
+  tableName: 'users',
+  dbClient,
+  data: {
+    name: 'John Silva',
+    email: 'john@example.com',
+    age: 30,
+  },
+  returning: ['id', 'name', 'email', 'created_at'],
+})
+```
+
+#### `insertMany<P, R>(params)`
+
+Inserts multiple records in a single operation.
+
+```typescript
+const usersData = [
+  { name: 'Maria', email: 'maria@example.com' },
+  { name: 'Pedro', email: 'pedro@example.com' },
+  { name: 'Ana', email: 'ana@example.com' },
+]
+
+const insertedUsers = await insertMany<UserData, User>({
+  tableName: 'users',
+  dbClient,
+  data: usersData,
   returning: ['id', 'name', 'email'],
 })
-
-console.log(insertedUser)
 ```
 
-#### update
+#### `update<P, R>(params)`
 
-Update an existing record in a table.
+Updates a specific record by ID.
 
 ```typescript
-import { update } from 'star-db-query-builder'
-
-const updatedUser = { name: 'John Smith' }
-
-const result = await update({
+const updatedUser = await update<UserData, User>({
   tableName: 'users',
   dbClient,
-  id: 1,
-  data: updatedUser,
-  returning: ['id', 'name', 'email'],
+  id: 'user-uuid',
+  data: {
+    name: 'John Silva Updated',
+    age: 31,
+  },
+  returning: ['id', 'name', 'age', 'updated_at'],
+})
+```
+
+#### `updateMany<P, R>(params)`
+
+Updates multiple records based on conditions.
+
+```typescript
+const updatedUsers = await updateMany<UserData, User>({
+  tableName: 'users',
+  dbClient,
+  data: {
+    status: 'inactive',
+    updated_at: new Date(),
+  },
+  where: {
+    last_login: { operator: '<', value: new Date('2024-01-01') },
+    status: { operator: '=', value: 'active' },
+  },
+  returning: ['id', 'name', 'status'],
+})
+```
+
+### 🗑️ **Delete Operations**
+
+#### `deleteOne<T>(params)`
+
+Removes a specific record (soft delete or hard delete).
+
+```typescript
+// Soft delete (mark as deleted)
+await deleteOne<User>({
+  tableName: 'users',
+  dbClient,
+  id: 'user-uuid',
+  permanently: false, // default
 })
 
-console.log(result)
-```
-
-#### deleteOne
-
-Delete a record from a table.
-
-```typescript
-import { deleteOne } from 'star-db-query-builder'
-
-await deleteOne({
+// Hard delete (permanently remove)
+await deleteOne<User>({
   tableName: 'users',
   dbClient,
-  id: 1,
+  id: 'user-uuid',
+  permanently: true,
+})
+```
+
+#### `deleteMany<T>(params)`
+
+Removes multiple records based on IDs or conditions.
+
+```typescript
+// By IDs
+await deleteMany<User>({
+  tableName: 'users',
+  dbClient,
+  ids: ['uuid1', 'uuid2', 'uuid3'],
   permanently: true,
 })
 
-console.log('User deleted')
+// By specific field
+await deleteMany<User>({
+  tableName: 'users',
+  dbClient,
+  ids: [1, 2, 3],
+  field: 'external_id',
+  permanently: false,
+})
 ```
 
-#### joins
+### 🔗 **Join Operations**
 
-Execute a join query.
+#### `joins<T>(params)`
+
+Executes complex queries with multiple joins.
 
 ```typescript
-import { joins } from 'star-db-query-builder'
-
-const joinResults = await joins({
+const ordersWithUsers = await joins<OrderWithUser>({
   tableName: 'orders',
   dbClient,
-  select: ['orders.id', 'users.name'],
+  select: [
+    'orders.id',
+    'orders.total',
+    'orders.created_at',
+    'users.name as user_name',
+    'users.email as user_email',
+  ],
   joins: [
     {
+      type: 'INNER',
       table: 'users',
-      on: { 'orders.userId': 'users.id' },
+      on: 'orders.user_id = users.id',
+    },
+    {
+      type: 'LEFT',
+      table: 'order_items',
+      on: 'orders.id = order_items.order_id',
     },
   ],
   where: {
-    JOINS: [
+    'orders.status': { operator: '=', value: 'completed' },
+    'orders.created_at': { operator: '>=', value: new Date('2024-01-01') },
+  },
+  orderBy: [{ field: 'orders.created_at', direction: 'DESC' }],
+  limit: 50,
+})
+```
+
+## 🎯 Practical Examples
+
+### E-commerce System
+
+```typescript
+// Find products with stock
+const availableProducts = await findMany<Product>({
+  tableName: 'products',
+  dbClient,
+  select: ['id', 'name', 'price', 'stock_quantity'],
+  where: {
+    stock_quantity: { operator: '>', value: 0 },
+    status: { operator: '=', value: 'active' },
+    category_id: { operator: 'IN', value: [1, 2, 3] },
+  },
+  orderBy: [{ field: 'created_at', direction: 'DESC' }],
+  limit: 20,
+})
+
+// Create order with items
+const orderData = {
+  user_id: 'user-uuid',
+  total: 299.99,
+  status: 'pending',
+}
+
+const newOrder = await insert<OrderData, Order>({
+  tableName: 'orders',
+  dbClient,
+  data: orderData,
+  returning: ['id', 'total', 'created_at'],
+})
+
+// Update product stock
+const orderItems = [
+  { product_id: 1, quantity: 2 },
+  { product_id: 3, quantity: 1 },
+]
+
+await insertMany<OrderItemData, OrderItem>({
+  tableName: 'order_items',
+  dbClient,
+  data: orderItems.map((item) => ({
+    order_id: newOrder.id,
+    ...item,
+  })),
+})
+
+// Update stock
+for (const item of orderItems) {
+  await updateMany<ProductData, Product>({
+    tableName: 'products',
+    dbClient,
+    data: {
+      stock_quantity: { operator: '-', value: item.quantity },
+      updated_at: new Date(),
+    },
+    where: {
+      id: { operator: '=', value: item.product_id },
+    },
+  })
+}
+```
+
+### Authentication System
+
+```typescript
+// Find user by email with password verification
+const user = await findFirst<User>({
+  tableName: 'users',
+  dbClient,
+  select: ['id', 'email', 'password_hash', 'status'],
+  where: {
+    email: { operator: 'ILIKE', value: 'user@example.com' },
+    status: { operator: '=', value: 'active' },
+  },
+})
+
+if (user && (await bcrypt.compare(password, user.password_hash))) {
+  // Successful login
+  await update<UserData, User>({
+    tableName: 'users',
+    dbClient,
+    id: user.id,
+    data: {
+      last_login: new Date(),
+      login_count: { operator: '+', value: 1 },
+    },
+  })
+}
+```
+
+### Notification System
+
+```typescript
+// Find unread notifications
+const unreadNotifications = await findMany<Notification>({
+  tableName: 'notifications',
+  dbClient,
+  select: ['id', 'title', 'message', 'type', 'created_at'],
+  where: {
+    user_id: { operator: '=', value: 'user-uuid' },
+    read_at: { operator: 'IS NULL' },
+  },
+  orderBy: [{ field: 'created_at', direction: 'DESC' }],
+  limit: 10,
+})
+
+// Mark as read
+await updateMany<NotificationData, Notification>({
+  tableName: 'notifications',
+  dbClient,
+  data: {
+    read_at: new Date(),
+  },
+  where: {
+    user_id: { operator: '=', value: 'user-uuid' },
+    read_at: { operator: 'IS NULL' },
+  },
+})
+```
+
+## 🔧 Advanced Use Cases
+
+### Unaccent Search (PostgreSQL)
+
+```typescript
+// Search ignoring accents
+const searchResults = await findMany<User>({
+  tableName: 'users',
+  dbClient,
+  select: ['id', 'name', 'email'],
+  where: {
+    name: { operator: 'ILIKE', value: '%joão%' },
+  },
+  unaccent: true, // Enable accent-insensitive search
+})
+```
+
+### Complex Conditions
+
+```typescript
+// Nested OR/AND conditions
+const complexQuery = await findMany<Order>({
+  tableName: 'orders',
+  dbClient,
+  where: {
+    OR: [
       {
-        'users.id': { operator: '=', value: exist.user_id },
+        status: { operator: '=', value: 'pending' },
+        created_at: { operator: '>=', value: new Date('2024-01-01') },
+      },
+      {
+        status: { operator: '=', value: 'processing' },
+        priority: { operator: '=', value: 'high' },
+      },
+    ],
+    AND: [
+      {
+        total: { operator: '>=', value: 100 },
+        user_id: { operator: 'IS NOT NULL' },
       },
     ],
   },
 })
-
-console.log(joinResults)
 ```
 
-#### insertMany
-
-Insert multiple records into a table at once, optimizing performance for batch operations.
-
-#### Parameters
-
-- `tableName`: Name of the table
-- `dbClient`: Database client (PostgreSQL or MySQL)
-- `data`: Array of objects with the data to be inserted
-- `returning` (optional): Array of fields to be returned after insertion
-
-#### Usage Example
+### Subqueries
 
 ```typescript
-import { insertMany } from 'star-db-query-builder'
-
-// Data for insertion
-const usersData = [
-  { name: 'João Silva', email: 'joao@example.com', age: 30 },
-  { name: 'Maria Santos', email: 'maria@example.com', age: 25 },
-  { name: 'Pedro Costa', email: 'pedro@example.com', age: 35 },
-]
-
-// Insert multiple users
-const insertedUsers = await insertMany({
+// Users who made orders in the last month
+const activeUsers = await findMany<User>({
   tableName: 'users',
-  dbClient: dbClient,
-  data: usersData,
-  returning: ['id', 'name', 'email', 'created_at'],
+  dbClient,
+  select: ['id', 'name', 'email'],
+  where: {
+    id: {
+      operator: 'IN',
+      value: `SELECT DISTINCT user_id FROM orders 
+              WHERE created_at >= '${new Date('2024-01-01').toISOString()}'`,
+    },
+  },
 })
-
-console.log('Users inserted:', insertedUsers)
 ```
 
-#### Features
-
-- **Automatic UUID Generation**: Each record receives a unique ID automatically
-- **Automatic Timestamp**: The `updated_at` field is filled automatically
-- **Support for PostgreSQL and MySQL**: Works with both databases
-- **Data Return**: Can return specific fields after insertion
-- **Optimized Performance**: Uses a single query to insert all records
-
-#### Database Behavior
-
-**PostgreSQL**: Uses the `RETURNING` clause to return inserted data
-**MySQL**: Executes a separate query to fetch inserted records
-
-#### Validations
-
-- Checks if the table name was provided
-- Checks if the database client was provided
-- Checks if the data array is not empty
-- Ensures that all items have the same structure of fields
-
-#### updateMany
-
-Updates multiple records in a table based on a where condition, optimizing performance for batch operations.
-
-#### Parameters
-
-- `tableName`: Name of the table
-- `dbClient`: Database client (PostgreSQL or MySQL)
-- `data`: Object with the data to be updated
-- `where`: Where condition to filter which records to update
-- `returning` (optional): Array of fields to be returned after update
-
-#### Usage Example
+### Transactions
 
 ```typescript
-import { updateMany } from 'star-db-query-builder'
+// Transaction example (custom implementation)
+const transaction = await dbClient.beginTransaction()
 
-// Update data
-const updateData = {
-  status: 'active',
-  updated_at: new Date(),
+try {
+  // Create order
+  const order = await insert<OrderData, Order>({
+    tableName: 'orders',
+    dbClient: transaction,
+    data: orderData,
+  })
+
+  // Create order items
+  await insertMany<OrderItemData, OrderItem>({
+    tableName: 'order_items',
+    dbClient: transaction,
+    data: orderItems.map((item) => ({
+      order_id: order.id,
+      ...item,
+    })),
+  })
+
+  // Update stock
+  await updateMany<ProductData, Product>({
+    tableName: 'products',
+    dbClient: transaction,
+    data: { stock_quantity: { operator: '-', value: 1 } },
+    where: { id: { operator: 'IN', value: productIds } },
+  })
+
+  await transaction.commit()
+} catch (error) {
+  await transaction.rollback()
+  throw error
 }
-
-// Where condition
-const whereCondition = {
-  status: { operator: '=', value: 'pending' },
-  created_at: { operator: '<', value: new Date('2024-01-01') },
-}
-
-// Update multiple users
-const updatedUsers = await updateMany({
-  tableName: 'users',
-  dbClient: dbClient,
-  data: updateData,
-  where: whereCondition,
-  returning: ['id', 'name', 'email', 'status', 'updated_at'],
-})
-
-console.log('Users updated:', updatedUsers)
 ```
 
-#### Features
+## 📊 Monitoring
 
-- **Batch Update**: Updates multiple records with a single query
-- **Conditional Update**: Uses where conditions to filter which records to update
-- **Support for PostgreSQL and MySQL**: Works with both databases
-- **Data Return**: Can return specific fields after the update
-- **Optimized Performance**: Uses a single query to update all matching records
+### Available Events
 
-#### Database Behavior
-
-**PostgreSQL**: Uses the `RETURNING` clause to return updated data
-**MySQL**: Executes a separate query to fetch updated records
-
-#### Validations
-
-- Checks if the table name was provided
-- Checks if the database client was provided
-- Checks if the data object was provided
-- Checks if the where condition was provided
-
-### Monitoring and Logging
-
-The library provides a monitoring module that emits key events during the lifecycle of connections and queries. You can subscribe to these events to integrate with your logging or monitoring system.
-
-#### Available Events
-
-CONNECTION_CREATED: Emitted when a new connection (pool) is established.
-QUERY_START: Emitted just before a query starts executing.
-QUERY_END: Emitted after a query completes, including its execution time.
-QUERY_ERROR: Emitted when an error occurs during query execution.
-RETRY_ATTEMPT: Emitted when a query is retried due to a transient error.
-
-```ts
+```typescript
 import { monitor, MonitorEvents } from '@starbemtech/star-db-query-builder'
 
+// Connection created
 monitor.on(MonitorEvents.CONNECTION_CREATED, (data) => {
-  console.log('Connection created:', data)
+  console.log('🔄 New connection created:', data)
 })
 
+// Query started
 monitor.on(MonitorEvents.QUERY_START, (data) => {
-  console.log('Query started:', data)
+  console.log('🚀 Query started:', {
+    sql: data.sql,
+    params: data.params,
+    timestamp: new Date(),
+  })
 })
 
+// Query finished
 monitor.on(MonitorEvents.QUERY_END, (data) => {
-  console.log('Query finished:', data)
+  console.log('✅ Query finished:', {
+    duration: data.duration,
+    rows: data.rows?.length,
+    timestamp: new Date(),
+  })
+})
+
+// Query error
+monitor.on(MonitorEvents.QUERY_ERROR, (data) => {
+  console.error('❌ Query error:', {
+    error: data.error.message,
+    sql: data.sql,
+    params: data.params,
+    timestamp: new Date(),
+  })
+})
+
+// Query retry
+monitor.on(MonitorEvents.RETRY_ATTEMPT, (data) => {
+  console.warn('🔄 Retry attempt:', {
+    attempt: data.attempt,
+    error: data.error.message,
+    timestamp: new Date(),
+  })
+})
+```
+
+### Logging Integration
+
+```typescript
+import winston from 'winston'
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' }),
+  ],
 })
 
 monitor.on(MonitorEvents.QUERY_ERROR, (data) => {
-  console.error('Query error:', data)
+  logger.error('Database query error', {
+    error: data.error.message,
+    sql: data.sql,
+    params: data.params,
+    stack: data.error.stack,
+  })
 })
 
-monitor.on(MonitorEvents.RETRY_ATTEMPT, (data) => {
-  console.warn('Retrying query:', data)
+monitor.on(MonitorEvents.QUERY_END, (data) => {
+  if (data.duration > 1000) {
+    // Log slow queries (>1s)
+    logger.warn('Slow query detected', {
+      duration: data.duration,
+      sql: data.sql,
+      params: data.params,
+    })
+  }
 })
 ```
 
-## Customizing the Retry Strategy
+## 🛠️ Supported Operators
 
-The automatic retry mechanism leverages the promise-retry library. You can customize the following parameters:
+### Comparison Operators
 
-- retries: Number of retry attempts.
-- factor: Exponential backoff factor.
-- minTimeout: Minimum time (in milliseconds) to wait between retry attempts.
+- `=` - Equal
+- `!=` - Not equal
+- `>` - Greater than
+- `<` - Less than
+- `>=` - Greater than or equal
+- `<=` - Less than or equal
 
-These parameters are passed via the retryOptions property when initializing the connection.
+### Text Operators
 
-## Contributing
+- `LIKE` - Pattern search
+- `NOT LIKE` - Negative pattern search
+- `ILIKE` - Case-insensitive search (PostgreSQL)
+- `NOT ILIKE` - Negative case-insensitive search
 
-Feel free to contribute by opening pull requests or issues with improvements and bug fixes.
+### Set Operators
 
-## License
+- `IN` - Belongs to set
+- `NOT IN` - Does not belong to set
+- `BETWEEN` - Between two values
 
-This project is licensed under the MIT License.
+### Null Operators
 
-This documentation explains how to set up connections with external configuration for both connection pool and retry options, retrieve clients to execute queries, and monitor events for logging and diagnostics.
+- `IS NULL` - Is null
+- `IS NOT NULL` - Is not null
+
+### Special Operators
+
+- `NOT EXISTS` - Subquery returns no results
+
+## 🔧 Available Scripts
+
+```bash
+# Development
+npm run build          # Compile TypeScript
+npm run test           # Run tests
+npm run test:watch     # Tests in watch mode
+npm run test:coverage  # Tests with coverage
+npm run lint           # Check linting
+npm run lint:fix       # Fix linting issues
+npm run format         # Format code
+
+# Versioning
+npm run version:patch  # Increment patch (1.0.0 -> 1.0.1)
+npm run version:minor  # Increment minor (1.0.0 -> 1.1.0)
+npm run version:major  # Increment major (1.0.0 -> 2.0.0)
+
+# Release
+npm run release        # Create complete release
+```
+
+## 🤝 Contributing
+
+1. **Fork** the project
+2. **Create** a feature branch (`git checkout -b feature/AmazingFeature`)
+3. **Commit** your changes (`git commit -m 'Add some AmazingFeature'`)
+4. **Push** to the branch (`git push origin feature/AmazingFeature`)
+5. **Open** a Pull Request
+
+### Contribution Guidelines
+
+- ✅ Use TypeScript for all new features
+- ✅ Add tests for new features
+- ✅ Maintain test coverage above 80%
+- ✅ Follow linting and formatting conventions
+- ✅ Document new APIs and features
+- ✅ Update CHANGELOG.md for significant changes
+
+### Project Structure
+
+```
+src/
+├── db/                 # Database clients
+│   ├── initDb.ts      # Connection initialization
+│   ├── pgClient.ts    # PostgreSQL client
+│   ├── mysqlClient.ts # MySQL client
+│   └── IDatabaseClient.ts # Client interface
+├── default/           # Generic repository
+│   ├── genericRepository.ts # CRUD methods
+│   ├── types.ts       # TypeScript types
+│   └── utils.ts       # Query utilities
+└── monitor/           # Monitoring system
+    └── monitor.ts     # Events and monitoring
+```
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- 📧 **Email**: julio.sousa@starbem.app
+- 🐛 **Issues**: [GitHub Issues](https://github.com/starbem/star-db-query-builder/issues)
+- 📖 **Documentation**: [GitHub Wiki](https://github.com/starbem/star-db-query-builder/wiki)
+
+## 🙏 Acknowledgments
+
+- [node-postgres](https://github.com/brianc/node-postgres) - PostgreSQL client
+- [mysql2](https://github.com/sidorares/node-mysql2) - MySQL client
+- [promise-retry](https://github.com/IndigoUnited/js-promise-retry) - Retry system
+- [uuid](https://github.com/uuidjs/uuid) - UUID generation
 
 ---
 
-💻 Happy Coding!
+<div align="center">
+  <p>Made with ❤️ by the <strong>Starbem</strong> team</p>
+  <p>💻 Happy Coding!</p>
+</div>
