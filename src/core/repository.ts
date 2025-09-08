@@ -659,6 +659,60 @@ export const joins = async <T>({
 }
 
 /**
+ * Executa uma query SQL raw diretamente no banco de dados
+ * @param params - Parâmetros da query raw
+ * @returns Promise com o resultado da query
+ *
+ * @example
+ * // Query simples sem parâmetros
+ * const users = await rawQuery({
+ *   dbClient,
+ *   sql: 'SELECT * FROM users WHERE active = true'
+ * })
+ *
+ * @example
+ * // Query com parâmetros
+ * const user = await rawQuery({
+ *   dbClient,
+ *   sql: 'SELECT * FROM users WHERE id = ? AND email = ?',
+ *   params: ['user-id', 'user@example.com']
+ * })
+ *
+ * @example
+ * // Query de agregação
+ * const stats = await rawQuery({
+ *   dbClient,
+ *   sql: `
+ *     SELECT
+ *       COUNT(*) as total_users,
+ *       AVG(age) as avg_age,
+ *       MAX(created_at) as last_created
+ *     FROM users
+ *     WHERE created_at >= ?
+ *   `,
+ *   params: [new Date('2023-01-01')]
+ * })
+ */
+export const rawQuery = async <T = any>({
+  dbClient,
+  sql,
+  params = [],
+}: RawQueryParams): Promise<T> => {
+  if (!dbClient) throw new Error('DB client is required')
+  if (!sql || typeof sql !== 'string')
+    throw new Error('SQL query is required and must be a string')
+
+  try {
+    const result = await dbClient.query<T>(sql, params)
+    return result
+  } catch (error) {
+    throw new Error(
+      `Raw query execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    )
+  }
+}
+
+/**
  * Builds a query string from the provided query parameters
  *
  * This function builds a query string from the provided query parameters. It constructs the SQL query, executes it, and returns the result.

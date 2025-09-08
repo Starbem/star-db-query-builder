@@ -13,3 +13,4 @@ export * from './src/monitor/monitor'
 
 // Types Definition
 export type { PgPoolConfig, PgPoolOptions, MySqlPoolOptions, TypeConditions }
+export type * from './src/core/types'
