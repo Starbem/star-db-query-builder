@@ -1,5 +1,6 @@
 import { v4 as uuid } from 'uuid'
-import { QueryParams, QueryBuilder } from './types'
+import { QueryParams, QueryBuilder, RawQueryParams } from './types'
+import { ITransactionClient } from '../db/IDatabaseClient'
 import {
   createGroupByClause,
   createLimitClause,
@@ -707,4 +708,104 @@ async function buildQuery(params: QueryBuilder): Promise<string> {
   }
 
   return queryString
+}
+
+/**
+ * Executes a function within a database transaction
+ * @param dbClient - Database client instance
+ * @param transactionFn - Function to execute within the transaction
+ * @returns Promise with the result of the transaction function
+ *
+ * @example
+ * // Simple transaction
+ * const result = await withTransaction(dbClient, async (tx) => {
+ *   const user = await insert({
+ *     tableName: 'users',
+ *     dbClient: tx,
+ *     data: { name: 'John', email: 'john@example.com' }
+ *   })
+ *
+ *   await insert({
+ *     tableName: 'user_profiles',
+ *     dbClient: tx,
+ *     data: { user_id: user.id, bio: 'Hello world' }
+ *   })
+ *
+ *   return user
+ * })
+ *
+ * @example
+ * // Transaction with error handling
+ * try {
+ *   const result = await withTransaction(dbClient, async (tx) => {
+ *     // Multiple operations that must succeed or fail together
+ *     const order = await insert({
+ *       tableName: 'orders',
+ *       dbClient: tx,
+ *       data: { user_id: 'user-123', total: 100 }
+ *     })
+ *
+ *     await update({
+ *       tableName: 'users',
+ *       dbClient: tx,
+ *       id: 'user-123',
+ *       data: { last_order_id: order.id }
+ *     })
+ *
+ *     return order
+ *   })
+ * } catch (error) {
+ *   // Transaction was automatically rolled back
+ *   console.error('Transaction failed:', error)
+ * }
+ */
+export const withTransaction = async <T>(
+  dbClient: any,
+  transactionFn: (tx: ITransactionClient) => Promise<T>
+): Promise<T> => {
+  const transaction = await dbClient.beginTransaction()
+
+  try {
+    const result = await transactionFn(transaction)
+    await transaction.commit()
+    return result
+  } catch (error) {
+    await transaction.rollback()
+    throw error
+  }
+}
+
+/**
+ * Creates a transaction client for manual transaction management
+ * @param dbClient - Database client instance
+ * @returns Promise with the transaction client
+ *
+ * @example
+ * // Manual transaction management
+ * const transaction = await beginTransaction(dbClient)
+ *
+ * try {
+ *   const user = await insert({
+ *     tableName: 'users',
+ *     dbClient: transaction,
+ *     data: { name: 'John', email: 'john@example.com' }
+ *   })
+ *
+ *   await insert({
+ *     tableName: 'user_profiles',
+ *     dbClient: transaction,
+ *     data: { user_id: user.id, bio: 'Hello world' }
+ *   })
+ *
+ *   await transaction.commit()
+ *   return user
+ * } catch (error) {
+ *   await transaction.rollback()
+ *   throw error
+ * }
+ */
+export const beginTransaction = async (
+  dbClient: any
+): Promise<ITransactionClient> => {
+  return dbClient.beginTransaction()
 }

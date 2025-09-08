@@ -1,7 +1,7 @@
-import { Pool } from 'mysql2/promise'
+import { Pool, PoolConnection } from 'mysql2/promise'
 import promiseRetry from 'promise-retry'
-import { IDatabaseClient } from './IDatabaseClient'
-import { RetryOptions } from '../default/types'
+import { IDatabaseClient, ITransactionClient } from './IDatabaseClient'
+import { RetryOptions } from '../core/types'
 import { monitor, MonitorEvents } from '../monitor/monitor'
 
 const transientErrorCodes = new Set([
@@ -124,6 +124,77 @@ export const createMysqlClient = (
           throw error
         }
       }, retryOptions)
+    },
+    beginTransaction: async (): Promise<ITransactionClient> => {
+      const connection: PoolConnection = await pool.getConnection()
+
+      try {
+        await connection.beginTransaction()
+
+        return {
+          query: async <T>(sql: string, params?: any[]): Promise<T> => {
+            const startTime = Date.now()
+            try {
+              monitor.emit(MonitorEvents.QUERY_START, {
+                clientType: 'mysql',
+                sql,
+                params,
+                attempt: 1,
+                inTransaction: true,
+              })
+
+              const [rows] = await connection.execute(sql, params)
+
+              const elapsedTime = Date.now() - startTime
+              monitor.emit(MonitorEvents.QUERY_END, {
+                clientType: 'mysql',
+                sql,
+                params,
+                attempt: 1,
+                elapsedTime,
+                inTransaction: true,
+              })
+
+              return rows as unknown as T
+            } catch (error) {
+              const elapsedTime = Date.now() - startTime
+              monitor.emit(MonitorEvents.QUERY_ERROR, {
+                clientType: 'mysql',
+                sql,
+                params,
+                attempt: 1,
+                elapsedTime,
+                error,
+                inTransaction: true,
+              })
+              throw error
+            }
+          },
+          commit: async (): Promise<void> => {
+            try {
+              await connection.commit()
+              monitor.emit(MonitorEvents.TRANSACTION_COMMIT, {
+                clientType: 'mysql',
+              })
+            } finally {
+              connection.release()
+            }
+          },
+          rollback: async (): Promise<void> => {
+            try {
+              await connection.rollback()
+              monitor.emit(MonitorEvents.TRANSACTION_ROLLBACK, {
+                clientType: 'mysql',
+              })
+            } finally {
+              connection.release()
+            }
+          },
+        }
+      } catch (error) {
+        connection.release()
+        throw error
+      }
     },
   }
 }

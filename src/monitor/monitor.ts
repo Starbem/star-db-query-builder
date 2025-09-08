@@ -9,6 +9,8 @@ export enum MonitorEvents {
   QUERY_END = 'query_end',
   QUERY_ERROR = 'query_error',
   RETRY_ATTEMPT = 'retry_attempt',
+  TRANSACTION_COMMIT = 'transaction_commit',
+  TRANSACTION_ROLLBACK = 'transaction_rollback',
 }
 
 export const monitor = new EventEmitter()

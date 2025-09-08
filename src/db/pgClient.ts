@@ -1,7 +1,7 @@
-import { Pool, PoolConfig } from 'pg'
+import { Pool, PoolConfig, PoolClient } from 'pg'
 import promiseRetry from 'promise-retry'
-import { IDatabaseClient } from './IDatabaseClient'
-import { RetryOptions } from '../default/types'
+import { IDatabaseClient, ITransactionClient } from './IDatabaseClient'
+import { RetryOptions } from '../core/types'
 import { monitor, MonitorEvents } from '../monitor/monitor'
 
 const transientErrorCodes = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'])
@@ -170,6 +170,77 @@ export const createPgClient = async (
           throw error
         }
       }, retryOptions)
+    },
+    beginTransaction: async (): Promise<ITransactionClient> => {
+      const client: PoolClient = await pool.connect()
+
+      try {
+        await client.query('BEGIN')
+
+        return {
+          query: async <T>(sql: string, params?: any[]): Promise<T> => {
+            const startTime = Date.now()
+            try {
+              monitor.emit(MonitorEvents.QUERY_START, {
+                clientType: 'pg',
+                sql,
+                params,
+                attempt: 1,
+                inTransaction: true,
+              })
+
+              const { rows } = await client.query(sql, params)
+
+              const elapsedTime = Date.now() - startTime
+              monitor.emit(MonitorEvents.QUERY_END, {
+                clientType: 'pg',
+                sql,
+                params,
+                attempt: 1,
+                elapsedTime,
+                inTransaction: true,
+              })
+
+              return rows as unknown as T
+            } catch (error) {
+              const elapsedTime = Date.now() - startTime
+              monitor.emit(MonitorEvents.QUERY_ERROR, {
+                clientType: 'pg',
+                sql,
+                params,
+                attempt: 1,
+                elapsedTime,
+                error,
+                inTransaction: true,
+              })
+              throw error
+            }
+          },
+          commit: async (): Promise<void> => {
+            try {
+              await client.query('COMMIT')
+              monitor.emit(MonitorEvents.TRANSACTION_COMMIT, {
+                clientType: 'pg',
+              })
+            } finally {
+              client.release()
+            }
+          },
+          rollback: async (): Promise<void> => {
+            try {
+              await client.query('ROLLBACK')
+              monitor.emit(MonitorEvents.TRANSACTION_ROLLBACK, {
+                clientType: 'pg',
+              })
+            } finally {
+              client.release()
+            }
+          },
+        }
+      } catch (error) {
+        client.release()
+        throw error
+      }
     },
   }
 }

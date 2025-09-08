@@ -85,3 +85,13 @@ export interface QueryBuilder {
   limit?: string
   offset?: string
 }
+
+export interface RawQueryParams {
+  dbClient: IDatabaseClient
+  sql: string
+  params?: any[]
+}
+
+export interface TransactionParams {
+  dbClient: IDatabaseClient
+}

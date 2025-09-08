@@ -1,4 +1,10 @@
-import { DBClients } from '../default/types'
+import { DBClients } from '../core/types'
+
+export interface ITransactionClient {
+  query: <T>(sql: string, params?: any[]) => Promise<T>
+  commit: () => Promise<void>
+  rollback: () => Promise<void>
+}
 
 /**
  * Database client interface
@@ -6,4 +12,5 @@ import { DBClients } from '../default/types'
 export type IDatabaseClient = {
   clientType: DBClients
   query: <T>(sql: string, params?: any[]) => Promise<T>
+  beginTransaction: () => Promise<ITransactionClient>
 }

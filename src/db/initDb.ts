@@ -3,7 +3,7 @@ import { createPool as createMySqlPool } from 'mysql2/promise'
 import { createPgClient } from './pgClient'
 import { createMysqlClient } from './mysqlClient'
 import { IDatabaseClient } from './IDatabaseClient'
-import { DBClients, RetryOptions } from '../default/types'
+import { DBClients, RetryOptions } from '../core/types'
 
 const dbClients: Record<string, IDatabaseClient> = {}
 const defaultName = 'default'
