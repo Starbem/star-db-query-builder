@@ -17,6 +17,8 @@ jest.mock('../../monitor/monitor', () => ({
     QUERY_END: 'QUERY_END',
     QUERY_ERROR: 'QUERY_ERROR',
     RETRY_ATTEMPT: 'RETRY_ATTEMPT',
+    TRANSACTION_COMMIT: 'TRANSACTION_COMMIT',
+    TRANSACTION_ROLLBACK: 'TRANSACTION_ROLLBACK',
   },
 }))
 
@@ -152,6 +154,107 @@ describe('PgClient', () => {
       expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('CREATE EXTENSION IF NOT EXISTS unaccent')
       )
+    })
+
+    describe('beginTransaction', () => {
+      let mockClient: any
+
+      beforeEach(() => {
+        mockClient = {
+          query: jest.fn(),
+          release: jest.fn(),
+        }
+        mockPool.connect.mockResolvedValue(mockClient)
+      })
+
+      it('should create a transaction client', async () => {
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        expect(mockPool.connect).toHaveBeenCalled()
+        expect(mockClient.query).toHaveBeenCalledWith('BEGIN')
+        expect(transaction).toHaveProperty('query')
+        expect(transaction).toHaveProperty('commit')
+        expect(transaction).toHaveProperty('rollback')
+      })
+
+      it('should execute queries within transaction', async () => {
+        const mockRows = [{ id: 1, name: 'John Doe' }]
+        mockClient.query.mockResolvedValue({ rows: mockRows, rowCount: 1 })
+
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+        const result = await transaction.query(
+          'SELECT * FROM users WHERE id = $1',
+          [1]
+        )
+
+        expect(mockClient.query).toHaveBeenCalledWith(
+          'SELECT * FROM users WHERE id = $1',
+          [1]
+        )
+        expect(result).toEqual(mockRows)
+      })
+
+      it('should commit transaction successfully', async () => {
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+        await transaction.commit()
+
+        expect(mockClient.query).toHaveBeenCalledWith('COMMIT')
+        expect(mockClient.release).toHaveBeenCalled()
+      })
+
+      it('should rollback transaction on error', async () => {
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+        await transaction.rollback()
+
+        expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK')
+        expect(mockClient.release).toHaveBeenCalled()
+      })
+
+      it('should release connection even if commit fails', async () => {
+        const commitError = new Error('Commit failed')
+
+        // Mock the sequence: BEGIN succeeds, COMMIT fails
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+          .mockRejectedValueOnce(commitError) // COMMIT
+
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await expect(transaction.commit()).rejects.toThrow('Commit failed')
+        expect(mockClient.release).toHaveBeenCalled()
+      })
+
+      it('should release connection even if rollback fails', async () => {
+        const rollbackError = new Error('Rollback failed')
+
+        // Mock the sequence: BEGIN succeeds, ROLLBACK fails
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+          .mockRejectedValueOnce(rollbackError) // ROLLBACK
+
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await expect(transaction.rollback()).rejects.toThrow('Rollback failed')
+        expect(mockClient.release).toHaveBeenCalled()
+      })
+
+      it('should release connection if BEGIN fails', async () => {
+        const beginError = new Error('Begin transaction failed')
+        mockClient.query.mockRejectedValue(beginError)
+
+        const client = await createPgClient(mockPool)
+
+        await expect(client.beginTransaction()).rejects.toThrow(
+          'Begin transaction failed'
+        )
+        expect(mockClient.release).toHaveBeenCalled()
+      })
     })
   })
 })
