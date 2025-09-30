@@ -13,7 +13,7 @@ export interface QueryExec {
   values?: any[]
 }
 
-type SimpleValue = string | number | boolean | Date
+type SimpleValue = string | number | boolean | Date | null
 
 export interface OperatorCondition {
   operator:
