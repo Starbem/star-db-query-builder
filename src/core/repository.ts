@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid'
 import { QueryParams, QueryBuilder, RawQueryParams } from './types'
-import { ITransactionClient } from '../db/IDatabaseClient'
+import { IDatabaseClient, ITransactionClient } from '../db/IDatabaseClient'
 import {
   createGroupByClause,
   createLimitClause,
@@ -865,7 +865,7 @@ async function buildQuery(params: QueryBuilder): Promise<string> {
  * }
  */
 export const withTransaction = async <T>(
-  dbClient: any,
+  dbClient: IDatabaseClient,
   transactionFn: (tx: ITransactionClient) => Promise<T>
 ): Promise<T> => {
   const transaction = await dbClient.beginTransaction()
@@ -910,7 +910,7 @@ export const withTransaction = async <T>(
  * }
  */
 export const beginTransaction = async (
-  dbClient: any
+  dbClient: IDatabaseClient
 ): Promise<ITransactionClient> => {
   return dbClient.beginTransaction()
 }

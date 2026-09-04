@@ -623,7 +623,8 @@ describe('repository', () => {
   describe('withTransaction', () => {
     it('commits when the callback succeeds', async () => {
       const tx = { query: jest.fn(), commit: jest.fn(), rollback: jest.fn() }
-      const dbClient = { beginTransaction: jest.fn().mockResolvedValue(tx) }
+      const dbClient = createMockDbClient()
+      dbClient.beginTransaction.mockResolvedValue(tx)
 
       const result = await withTransaction(dbClient, async () => 'ok')
 
@@ -634,7 +635,8 @@ describe('repository', () => {
 
     it('rolls back and rethrows when the callback fails', async () => {
       const tx = { query: jest.fn(), commit: jest.fn(), rollback: jest.fn() }
-      const dbClient = { beginTransaction: jest.fn().mockResolvedValue(tx) }
+      const dbClient = createMockDbClient()
+      dbClient.beginTransaction.mockResolvedValue(tx)
       const error = new Error('boom')
 
       await expect(
@@ -651,7 +653,8 @@ describe('repository', () => {
   describe('beginTransaction', () => {
     it('delegates to dbClient.beginTransaction', async () => {
       const tx = { query: jest.fn(), commit: jest.fn(), rollback: jest.fn() }
-      const dbClient = { beginTransaction: jest.fn().mockResolvedValue(tx) }
+      const dbClient = createMockDbClient()
+      dbClient.beginTransaction.mockResolvedValue(tx)
 
       const result = await beginTransaction(dbClient)
 
