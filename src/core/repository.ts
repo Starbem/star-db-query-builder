@@ -360,6 +360,138 @@ export const insertMany = async <P, R>({
 }
 
 /**
+ * Inserts a record, or updates it in place if it collides with an existing
+ * unique/primary key
+ *
+ * Builds `INSERT ... ON CONFLICT (...) DO UPDATE SET ...` for pg and
+ * `INSERT ... ON DUPLICATE KEY UPDATE ...` for mysql. `conflictFields` must
+ * name columns actually covered by a unique or primary key constraint on
+ * `tableName` — this function does not create or verify that constraint, it
+ * only builds SQL that assumes it exists. For mysql, `conflictFields` is not
+ * part of the generated SQL (`ON DUPLICATE KEY UPDATE` relies on the table's
+ * own constraint) — it is used only to re-select the row afterwards, since
+ * mysql has no `RETURNING`.
+ *
+ * @template P - The type of the data to be upserted
+ * @template R - The type of the record to be returned
+ * @param params - Query parameters including table name, database client, data, conflict target fields, optional fields to update on conflict (defaults to every field in data), and optional returning fields
+ * @returns Promise<R> - The inserted or updated record
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When data object is not provided
+ * @throws {Error} When conflictFields is not provided or empty
+ *
+ * @example
+ * const record = await upsert({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   data: { email: 'john.doe@example.com', name: 'John Doe' },
+ *   conflictFields: ['email'],
+ *   returning: ['id', 'name', 'email'],
+ * })
+ */
+export const upsert = async <P, R>({
+  tableName,
+  dbClient,
+  data,
+  conflictFields,
+  updateFields,
+  returning,
+}: QueryParams<R> & {
+  data: P
+  conflictFields: string[]
+  updateFields?: string[]
+  returning?: string[]
+}): Promise<R> => {
+  if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
+  if (!dbClient) throw new Error('DB client is required')
+  if (!data) throw new Error('Data object is required')
+  if (!conflictFields || conflictFields.length === 0)
+    throw new Error('conflictFields is required and cannot be empty')
+  conflictFields.forEach((field) =>
+    assertValidIdentifier(field, 'conflict field')
+  )
+
+  const rawKeys = Object.keys(data)
+  rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+
+  const fieldsToUpdate =
+    updateFields && updateFields.length > 0 ? updateFields : rawKeys
+  fieldsToUpdate.forEach((key) => assertValidIdentifier(key, 'column name'))
+
+  const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
+  const values = Object.values(data)
+
+  keys.unshift(quoteIdentifier('id', dbClient.clientType))
+  const generatedUUID: string = uuid()
+  values.unshift(generatedUUID)
+
+  keys.push(quoteIdentifier('updated_at', dbClient.clientType))
+  values.push(new Date())
+
+  const placeholders = generatePlaceholders(keys, dbClient.clientType)
+  let query = `INSERT INTO ${tableName} (${keys.join(
+    ', '
+  )}) VALUES (${placeholders})`
+
+  if (dbClient.clientType === 'pg') {
+    const conflictTarget = conflictFields
+      .map((field) => quoteIdentifier(field, 'pg'))
+      .join(', ')
+    const updateSet = [...fieldsToUpdate, 'updated_at']
+      .map((key) => {
+        const quoted = quoteIdentifier(key, 'pg')
+        return `${quoted} = EXCLUDED.${quoted}`
+      })
+      .join(', ')
+
+    query += ` ON CONFLICT (${conflictTarget}) DO UPDATE SET ${updateSet}`
+
+    if (returning && returning.length > 0) {
+      query += ` RETURNING ${createSelectFields(
+        returning,
+        dbClient.clientType
+      )}`
+    }
+
+    const result = await dbClient.query<R[]>(query, values)
+    return result[0]
+  }
+
+  const updateSet = [...fieldsToUpdate, 'updated_at']
+    .map((key) => {
+      const quoted = quoteIdentifier(key, 'mysql')
+      return `${quoted} = VALUES(${quoted})`
+    })
+    .join(', ')
+
+  query += ` ON DUPLICATE KEY UPDATE ${updateSet}`
+
+  await dbClient.query(query, values)
+
+  const record = data as Record<string, any>
+  const whereClause = conflictFields
+    .map((field) => `${quoteIdentifier(field, 'mysql')} = ?`)
+    .join(' AND ')
+  const conflictValues = conflictFields.map((field) => record[field])
+
+  const rows = await dbClient.query<R[]>(
+    `SELECT ${
+      returning && returning.length > 0
+        ? createSelectFields(returning, dbClient.clientType)
+        : '*'
+    } FROM ${tableName}
+      WHERE ${whereClause}
+    `,
+    conflictValues
+  )
+
+  return rows[0]
+}
+
+/**
  * Updates a record in the specified table
  *
  * This function updates a record in the specified table based on the provided

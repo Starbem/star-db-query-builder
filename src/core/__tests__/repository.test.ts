@@ -5,6 +5,7 @@ import {
   insertMany,
   update,
   updateMany,
+  upsert,
   deleteOne,
   deleteMany,
   joins,
@@ -429,6 +430,115 @@ describe('repository', () => {
       const [sql, values] = dbClient.query.mock.calls[0]
       expect(sql).toBe('UPDATE users SET name = $1 WHERE status = $2')
       expect(values).toEqual(['John', 'pending'])
+    })
+  })
+
+  describe('upsert', () => {
+    it('throws when conflictFields is missing', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        upsert({
+          tableName: 'users',
+          dbClient,
+          data: { email: 'john@example.com' },
+          conflictFields: [],
+        })
+      ).rejects.toThrow('conflictFields is required and cannot be empty')
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('rejects a conflict field that is not a bare identifier', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        upsert({
+          tableName: 'users',
+          dbClient,
+          data: { email: 'john@example.com' },
+          conflictFields: ['email; DROP TABLE users; --'],
+        })
+      ).rejects.toThrow(/Invalid conflict field/)
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('builds ON CONFLICT DO UPDATE for pg, updating every data field by default', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([
+        { id: 'generated-uuid', email: 'john@example.com', name: 'John' },
+      ])
+
+      const result = await upsert({
+        tableName: 'users',
+        dbClient,
+        data: { email: 'john@example.com', name: 'John' },
+        conflictFields: ['email'],
+        returning: ['id', 'email', 'name'],
+      })
+
+      expect(result).toEqual({
+        id: 'generated-uuid',
+        email: 'john@example.com',
+        name: 'John',
+      })
+      const [sql, values] = dbClient.query.mock.calls[0] as [string, any[]]
+      expect(sql).toContain(
+        'INSERT INTO users ("id", "email", "name", "updated_at")'
+      )
+      expect(sql).toContain('ON CONFLICT ("email") DO UPDATE SET')
+      expect(sql).toContain('"email" = EXCLUDED."email"')
+      expect(sql).toContain('"name" = EXCLUDED."name"')
+      expect(sql).toContain('"updated_at" = EXCLUDED."updated_at"')
+      expect(sql).toContain('RETURNING id, email, name')
+      expect(values[0]).toBe('generated-uuid')
+    })
+
+    it('only updates the fields named in updateFields when given', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: 'generated-uuid' }])
+
+      await upsert({
+        tableName: 'users',
+        dbClient,
+        data: { email: 'john@example.com', name: 'John', role: 'admin' },
+        conflictFields: ['email'],
+        updateFields: ['name'],
+      })
+
+      const [sql] = dbClient.query.mock.calls[0]
+      expect(sql).toContain('"name" = EXCLUDED."name"')
+      expect(sql).toContain('"updated_at" = EXCLUDED."updated_at"')
+      expect(sql).not.toContain('"role" = EXCLUDED."role"')
+    })
+
+    it('builds ON DUPLICATE KEY UPDATE for mysql and re-selects by conflict fields', async () => {
+      const dbClient = createMockDbClient('mysql')
+      dbClient.query
+        .mockResolvedValueOnce({ affectedRows: 1 } as any) // INSERT
+        .mockResolvedValueOnce([
+          { id: 'generated-uuid', email: 'john@example.com' },
+        ] as any) // SELECT
+
+      const result = await upsert({
+        tableName: 'users',
+        dbClient,
+        data: { email: 'john@example.com', name: 'John' },
+        conflictFields: ['email'],
+      })
+
+      expect(result).toEqual({
+        id: 'generated-uuid',
+        email: 'john@example.com',
+      })
+      const [insertSql] = dbClient.query.mock.calls[0]
+      expect(insertSql).toContain(
+        'INSERT INTO users (`id`, `email`, `name`, `updated_at`)'
+      )
+      expect(insertSql).toContain('ON DUPLICATE KEY UPDATE')
+      expect(insertSql).toContain('`email` = VALUES(`email`)')
+      expect(insertSql).toContain('`name` = VALUES(`name`)')
+
+      const [selectSql, selectParams] = dbClient.query.mock.calls[1]
+      expect(selectSql).toContain('WHERE `email` = ?')
+      expect(selectParams).toEqual(['john@example.com'])
     })
   })
 
