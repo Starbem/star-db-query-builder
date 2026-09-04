@@ -1,5 +1,10 @@
 import { v4 as uuid } from 'uuid'
-import { QueryParams, QueryBuilder, RawQueryParams } from './types'
+import {
+  QueryParams,
+  QueryBuilder,
+  RawQueryParams,
+  CursorPageResult,
+} from './types'
 import { IDatabaseClient, ITransactionClient } from '../db/IDatabaseClient'
 import {
   createGroupByClause,
@@ -150,6 +155,119 @@ export const findMany = async <T>({
   )
 
   return rows || []
+}
+
+/**
+ * Finds multiple records in the specified table using keyset (cursor)
+ * pagination instead of offset/limit
+ *
+ * Unlike offset-based pagination, keyset pagination stays O(1) regardless of
+ * how deep the page is (no `OFFSET N` row-skipping) and does not skip/repeat
+ * rows when the underlying data changes between pages. It requires
+ * `cursorField` to be a strictly ordered, indexed column — `id` (if
+ * sequential) or `created_at` are typical choices; a plain UUID `id` works
+ * for uniqueness but its ordering is arbitrary, so prefer a monotonically
+ * increasing column when the page order matters to callers.
+ *
+ * @template T - The type of the records to be returned
+ * @param params - Query parameters including table name, database client, select fields, where conditions, cursor field, cursor value, direction, page size and unaccent
+ * @returns Promise<CursorPageResult<T>> - The page of records plus the cursor to request the next page (`null` when there is no next page)
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When direction is not ASC or DESC
+ *
+ * @example
+ * // First page
+ * const page1 = await findManyCursor({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   where: { status: { operator: '=', value: 'active' } },
+ *   cursorField: 'created_at',
+ *   limit: 20,
+ * })
+ *
+ * @example
+ * // Next page
+ * const page2 = await findManyCursor({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   cursorField: 'created_at',
+ *   cursor: page1.nextCursor,
+ *   limit: 20,
+ * })
+ */
+export const findManyCursor = async <T>({
+  tableName,
+  dbClient,
+  select,
+  where,
+  cursorField = 'id',
+  cursor,
+  direction = 'ASC',
+  limit = 20,
+  unaccent,
+}: QueryParams<T> & {
+  cursorField?: string
+  cursor?: string | number
+  direction?: 'ASC' | 'DESC'
+}): Promise<CursorPageResult<T>> => {
+  if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
+  if (!dbClient) throw new Error('DB client is required')
+  assertValidIdentifier(cursorField, 'cursor field')
+  if (direction !== 'ASC' && direction !== 'DESC') {
+    throw new Error(
+      `Invalid direction: "${direction}". Only ASC or DESC are allowed.`
+    )
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new Error(`Invalid limit: "${limit}". Must be a positive integer.`)
+  }
+
+  const fields = createSelectFields(select, dbClient.clientType)
+  const [whereClause, whereParams, nextIndex] = createWhereClause(
+    where,
+    1,
+    dbClient.clientType,
+    unaccent
+  )
+
+  const params = [...whereParams]
+  let cursorCondition = ''
+  if (cursor !== undefined && cursor !== null) {
+    const operator = direction === 'ASC' ? '>' : '<'
+    const placeholder = dbClient.clientType === 'pg' ? `$${nextIndex}` : '?'
+    cursorCondition = `${cursorField} ${operator} ${placeholder}`
+    params.push(cursor)
+  }
+
+  let combinedWhere = whereClause
+  if (cursorCondition) {
+    combinedWhere = whereClause
+      ? `${whereClause} AND ${cursorCondition}`
+      : ` WHERE ${cursorCondition}`
+  }
+
+  // fetch one extra row to know whether a next page exists without a
+  // separate COUNT query
+  const rows = await dbClient.query<T[]>(
+    `SELECT ${fields} FROM ${tableName}
+      ${combinedWhere}
+      ORDER BY ${cursorField} ${direction}
+      LIMIT ${limit + 1}
+    `,
+    params
+  )
+
+  const hasMore = rows.length > limit
+  const data = hasMore ? rows.slice(0, limit) : rows
+  const lastRow = data[data.length - 1] as Record<string, any> | undefined
+
+  return {
+    data,
+    nextCursor: hasMore && lastRow ? lastRow[cursorField] : null,
+  }
 }
 
 /**

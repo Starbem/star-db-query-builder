@@ -1,6 +1,7 @@
 import {
   findFirst,
   findMany,
+  findManyCursor,
   insert,
   insertMany,
   update,
@@ -118,6 +119,125 @@ describe('repository', () => {
       const result = await findMany({ tableName: 'users', dbClient })
 
       expect(result).toEqual([])
+    })
+  })
+
+  describe('findManyCursor', () => {
+    it('throws when direction is invalid', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        findManyCursor({
+          tableName: 'users',
+          dbClient,
+          direction: 'SIDEWAYS' as any,
+        })
+      ).rejects.toThrow(/Invalid direction/)
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('throws when limit is not a positive integer', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        findManyCursor({ tableName: 'users', dbClient, limit: 0 })
+      ).rejects.toThrow(/Invalid limit/)
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('rejects a cursorField that is not a bare identifier', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        findManyCursor({
+          tableName: 'users',
+          dbClient,
+          cursorField: 'id; DROP TABLE users; --',
+        })
+      ).rejects.toThrow(/Invalid cursor field/)
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('requests one extra row and reports nextCursor when there is a next page', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([
+        { id: '1' },
+        { id: '2' },
+        { id: '3' },
+      ])
+
+      const result = await findManyCursor({
+        tableName: 'users',
+        dbClient,
+        limit: 2,
+      })
+
+      expect(result.data).toEqual([{ id: '1' }, { id: '2' }])
+      expect(result.nextCursor).toBe('2')
+      const [sql] = dbClient.query.mock.calls[0]
+      expect(sql).toContain('ORDER BY id ASC')
+      expect(sql).toContain('LIMIT 3')
+    })
+
+    it('returns nextCursor null when the page is not full', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: '1' }])
+
+      const result = await findManyCursor({
+        tableName: 'users',
+        dbClient,
+        limit: 2,
+      })
+
+      expect(result.data).toEqual([{ id: '1' }])
+      expect(result.nextCursor).toBeNull()
+    })
+
+    it('adds the cursor condition to an existing WHERE clause using AND, after the WHERE params', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([])
+
+      await findManyCursor({
+        tableName: 'users',
+        dbClient,
+        where: { status: { operator: '=', value: 'active' } },
+        cursorField: 'created_at',
+        cursor: '2026-01-01',
+      })
+
+      const [sql, values] = dbClient.query.mock.calls[0] as [string, any[]]
+      expect(sql).toContain('WHERE status = $1 AND created_at > $2')
+      expect(values).toEqual(['active', '2026-01-01'])
+    })
+
+    it('flips the comparison operator to < when direction is DESC', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([])
+
+      await findManyCursor({
+        tableName: 'users',
+        dbClient,
+        cursorField: 'created_at',
+        cursor: '2026-01-01',
+        direction: 'DESC',
+      })
+
+      const [sql] = dbClient.query.mock.calls[0]
+      expect(sql).toContain('WHERE created_at < $1')
+      expect(sql).toContain('ORDER BY created_at DESC')
+    })
+
+    it('uses ? placeholders for mysql', async () => {
+      const dbClient = createMockDbClient('mysql')
+      dbClient.query.mockResolvedValue([])
+
+      await findManyCursor({
+        tableName: 'users',
+        dbClient,
+        where: { status: { operator: '=', value: 'active' } },
+        cursor: '5',
+      })
+
+      const [sql, values] = dbClient.query.mock.calls[0] as [string, any[]]
+      expect(sql).toContain('WHERE status = ? AND id > ?')
+      expect(values).toEqual(['active', '5'])
     })
   })
 

@@ -92,6 +92,16 @@ export interface QueryBuilder {
   offset?: string
 }
 
+export interface CursorPageResult<T> {
+  data: T[]
+  /**
+   * Value of `cursorField` on the last row of `data`, to pass back in as
+   * `cursor` for the next page. `null` when this page reached the end of
+   * the result set (no more rows past it).
+   */
+  nextCursor: string | number | null
+}
+
 export interface RawQueryParams {
   dbClient: IDatabaseClient
   sql: string
