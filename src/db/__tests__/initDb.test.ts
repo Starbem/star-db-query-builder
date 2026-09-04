@@ -93,6 +93,12 @@ describe('initDb / getDbClient / closeDb', () => {
         'Database client "never-registered" is not initialized'
       )
     })
+
+    it('names the default client in the error when no name is given', () => {
+      expect(() => getDbClient()).toThrow(
+        'Database client "default" is not initialized'
+      )
+    })
   })
 
   describe('getAllDbClients', () => {
@@ -137,7 +143,9 @@ describe('initDb / getDbClient / closeDb', () => {
       await closeDb()
 
       expect(mockPgPool.end).toHaveBeenCalled()
-      expect(() => getDbClient()).toThrow(/is not initialized/)
+      expect(() => getDbClient()).toThrow(
+        'Database client "default" is not initialized'
+      )
     })
 
     it('throws when the client is not initialized', async () => {

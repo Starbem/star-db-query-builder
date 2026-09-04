@@ -102,62 +102,6 @@ export const initDb = async <T>(config: {
 }
 
 /**
- * Initialize a database client with the specified configuration
- *
- * @template T - The type of connection options (PoolConfig for PostgreSQL or PoolOptions for MySQL)
- * @param config - Configuration object for database initialization
- * @param config.name - Optional name for the database client (defaults to 'default')
- * @param config.type - Database type ('pg' for PostgreSQL or 'mysql' for MySQL)
- * @param config.options - Connection options specific to the database type
- * @param config.retryOptions - Optional retry configuration for failed queries
- * @param config.installUnaccentExtension - Optional flag to install unaccent extension (PostgreSQL only)
- * @returns Promise<void> - Resolves when the database client is successfully initialized
- *
- * @throws {Error} When database type is not provided or is invalid
- * @throws {Error} When connection options are not provided
- * @throws {Error} When an unsupported database type is specified
- *
- * @example
- * // Initialize PostgreSQL client
- * await initDb({
- *   name: 'myPostgresDb',
- *   type: 'pg',
- *   options: {
- *     host: 'localhost',
- *     port: 5432,
- *     database: 'mydb',
- *     user: 'user',
- *     password: 'password'
- *   },
- *   retryOptions: { maxRetries: 3, delay: 1000 },
- *   installUnaccentExtension: true
- * });
- *
- * @example
- * // Initialize MySQL client
- * await initDb({
- *   name: 'myMysqlDb',
- *   type: 'mysql',
- *   options: {
- *     host: 'localhost',
- *     port: 3306,
- *     database: 'mydb',
- *     user: 'user',
- *     password: 'password'
- *   },
- *   retryOptions: { maxRetries: 3, delay: 1000 }
- * });
- */
-export const getDbClient = (name?: string): IDatabaseClient => {
-  const client = dbClients[name || defaultName]
-  if (!client) {
-    throw new Error(`Database client "${name}" is not initialized`)
-  }
-
-  return client
-}
-
-/**
  * Retrieves a specific database client by name
  *
  * @param name - Optional name of the database client to retrieve. If not provided, returns the default client
@@ -181,6 +125,25 @@ export const getDbClient = (name?: string): IDatabaseClient => {
  * } catch (error) {
  *   console.error('Database client not found:', error.message);
  * }
+ */
+export const getDbClient = (name?: string): IDatabaseClient => {
+  const key = name || defaultName
+  const client = dbClients[key]
+  if (!client) {
+    throw new Error(`Database client "${key}" is not initialized`)
+  }
+
+  return client
+}
+
+/**
+ * Retrieves every registered database client, keyed by name
+ *
+ * @returns Record<string, IDatabaseClient> - A map of all initialized database clients, keyed by the name they were registered under (including 'default')
+ *
+ * @example
+ * const clients = getAllDbClients();
+ * const names = Object.keys(clients); // ['default', 'myPostgresDb', 'myMysqlDb']
  */
 export const getAllDbClients = (): Record<string, IDatabaseClient> => {
   return dbClients
