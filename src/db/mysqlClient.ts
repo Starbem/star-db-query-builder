@@ -106,10 +106,6 @@ export const createMysqlClient = (
           })
 
           if (isTransientError(error)) {
-            console.warn(
-              `MySQL query attempt ${attempt} failed, retrying...`,
-              error
-            )
             monitor.emit(MonitorEvents.RETRY_ATTEMPT, {
               clientType: 'mysql',
               sql,

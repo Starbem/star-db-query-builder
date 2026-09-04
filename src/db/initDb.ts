@@ -84,18 +84,10 @@ export const initDb = async <T>(config: {
       config.installUnaccentExtension
     )
     dbPools[key] = pool
-
-    console.log(
-      `@starbemtech/star-db-query-builder: Postgres db client "${config.name}" created successfully`
-    )
   } else if (config.type === 'mysql') {
     const pool = createMySqlPool(config.options)
     dbClients[key] = createMysqlClient(pool, config.retryOptions)
     dbPools[key] = pool
-
-    console.info(
-      `@starbemtech/star-db-query-builder: Postgres db client "${config.name}" created successfully`
-    )
   } else {
     throw new Error('Unsupported database type')
   }
