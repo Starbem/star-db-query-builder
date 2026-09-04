@@ -74,7 +74,7 @@ export const findFirst = async <T>({
 
   const rows = await dbClient.query<T[]>(
     `SELECT ${fields} FROM ${tableName}
-      ${whereClause.length > 7 ? whereClause : ''}
+      ${whereClause}
       ${groupByClause}
       ${orderByClause}
       `,
@@ -140,7 +140,7 @@ export const findMany = async <T>({
 
   const rows = await dbClient.query<T[]>(
     `SELECT ${fields} FROM ${tableName}
-      ${whereClause.length > 7 ? whereClause : ''}
+      ${whereClause}
       ${groupByClause}
       ${orderByClause}
       ${limitClause}
