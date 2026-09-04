@@ -141,10 +141,56 @@ describe('repository', () => {
 
       expect(result).toEqual({ id: 'generated-uuid', name: 'John' })
       const [sql, values] = dbClient.query.mock.calls[0] as [string, any[]]
-      expect(sql).toContain('INSERT INTO users (id, name, updated_at)')
+      expect(sql).toContain('INSERT INTO users ("id", "name", "updated_at")')
       expect(sql).toContain('RETURNING id, name')
       expect(values[0]).toBe('generated-uuid')
       expect(values[1]).toBe('John')
+    })
+
+    it('quotes reserved-word column names for pg instead of a single hardcoded key', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: 'generated-uuid' }])
+
+      await insert({
+        tableName: 'users',
+        dbClient,
+        data: { order: 1, group: 'admins', authorization: 'token' },
+      })
+
+      const [sql] = dbClient.query.mock.calls[0]
+      expect(sql).toContain(
+        'INSERT INTO users ("id", "order", "group", "authorization", "updated_at")'
+      )
+    })
+
+    it('quotes reserved-word column names for mysql using backticks', async () => {
+      const dbClient = createMockDbClient('mysql')
+      dbClient.query
+        .mockResolvedValueOnce({ affectedRows: 1 } as any)
+        .mockResolvedValueOnce([{ id: 'generated-uuid' }] as any)
+
+      await insert({
+        tableName: 'users',
+        dbClient,
+        data: { order: 1, group: 'admins' },
+      })
+
+      const [sql] = dbClient.query.mock.calls[0]
+      expect(sql).toContain(
+        'INSERT INTO users (`id`, `order`, `group`, `updated_at`)'
+      )
+    })
+
+    it('rejects a data key that is not a bare identifier', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        insert({
+          tableName: 'users',
+          dbClient,
+          data: { 'name; DROP TABLE users; --': 'John' },
+        })
+      ).rejects.toThrow(/Invalid column name/)
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
 
     it('inserts a record for mysql and fetches it back by generated id', async () => {
@@ -192,6 +238,32 @@ describe('repository', () => {
       const [sql, values] = dbClient.query.mock.calls[0]
       expect(sql).toContain('($1, $2, $3), ($4, $5, $6)')
       expect(values).toHaveLength(6)
+    })
+
+    it('quotes reserved-word column names for pg', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: 'generated-uuid' }])
+
+      await insertMany({
+        tableName: 'users',
+        dbClient,
+        data: [{ order: 1 }],
+      })
+
+      const [sql] = dbClient.query.mock.calls[0]
+      expect(sql).toContain('INSERT INTO users ("id", "order", "updated_at")')
+    })
+
+    it('rejects a data key that is not a bare identifier', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        insertMany({
+          tableName: 'users',
+          dbClient,
+          data: [{ 'name; DROP TABLE users; --': 'John' }],
+        })
+      ).rejects.toThrow(/Invalid column name/)
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
   })
 

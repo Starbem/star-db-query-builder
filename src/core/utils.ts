@@ -68,6 +68,27 @@ export const assertSafeSqlFragment = (value: string, label: string): void => {
 }
 
 /**
+ * Quotes a column identifier using the target database's quoting convention
+ *
+ * This wraps a validated identifier in double quotes for PostgreSQL or
+ * backticks for MySQL, so reserved words (e.g. "order", "group", "user",
+ * "authorization") can be used as column names without a per-column special
+ * case.
+ *
+ * @param identifier - The already-validated column identifier
+ * @param clientType - The type of database client
+ * @returns The quoted identifier
+ *
+ * @example
+ * quoteIdentifier('order', 'pg') // '"order"'
+ * quoteIdentifier('order', 'mysql') // '`order`'
+ */
+export const quoteIdentifier = (
+  identifier: string,
+  clientType: DBClients
+): string => (clientType === 'pg' ? `"${identifier}"` : `\`${identifier}\``)
+
+/**
  * Converts an array of strings to a comma-separated string with quotes
  *
  * This function takes an array of strings and converts it to a comma-separated string

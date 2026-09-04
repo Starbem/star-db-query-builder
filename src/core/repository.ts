@@ -12,6 +12,7 @@ import {
   createOffsetClause,
   assertValidIdentifier,
   assertSafeSqlFragment,
+  quoteIdentifier,
 } from './utils'
 
 const JOIN_TYPES = new Set(['INNER', 'LEFT', 'RIGHT', 'FULL'])
@@ -185,19 +186,17 @@ export const insert = async <P, R>({
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
 
-  const keys =
-    dbClient.clientType === 'pg'
-      ? Object.keys(data).map((key) =>
-          key === 'authorization' ? `"${key}"` : key
-        )
-      : Object.keys(data)
+  const rawKeys = Object.keys(data)
+  rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+
+  const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
   const values = Object.values(data)
 
-  keys.unshift('id')
+  keys.unshift(quoteIdentifier('id', dbClient.clientType))
   const generatedUUID: string = uuid()
   values.unshift(generatedUUID)
 
-  keys.push('updated_at')
+  keys.push(quoteIdentifier('updated_at', dbClient.clientType))
   values.push(new Date())
 
   const placeholders = generatePlaceholders(keys, dbClient.clientType)
@@ -271,14 +270,16 @@ export const insertMany = async <P, R>({
     throw new Error('Data array is required and cannot be empty')
 
   const firstItem = data[0] as Record<string, any>
-  const keys =
-    dbClient.clientType === 'pg'
-      ? Object.keys(firstItem).map((key) =>
-          key === 'authorization' ? `"${key}"` : key
-        )
-      : Object.keys(firstItem)
+  const rawKeys = Object.keys(firstItem)
+  rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
 
-  const allKeys = ['id', ...keys, 'updated_at']
+  const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
+
+  const allKeys = [
+    quoteIdentifier('id', dbClient.clientType),
+    ...keys,
+    quoteIdentifier('updated_at', dbClient.clientType),
+  ]
 
   let query = `INSERT INTO ${tableName} (${allKeys.join(', ')}) VALUES `
 
