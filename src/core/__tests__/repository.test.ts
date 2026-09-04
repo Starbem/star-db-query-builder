@@ -240,6 +240,55 @@ describe('repository', () => {
       expect(values).toHaveLength(6)
     })
 
+    it('aligns values to the first item column order even when a later item declares keys in a different order', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([])
+
+      await insertMany({
+        tableName: 'users',
+        dbClient,
+        data: [
+          { name: 'John', email: 'john@example.com' },
+          { email: 'jane@example.com', name: 'Jane' },
+        ],
+      })
+
+      const [, values] = dbClient.query.mock.calls[0] as [string, any[]]
+      // row 1: id, name, email, updated_at | row 2: id, name, email, updated_at
+      expect(values[1]).toBe('John')
+      expect(values[2]).toBe('john@example.com')
+      expect(values[5]).toBe('Jane')
+      expect(values[6]).toBe('jane@example.com')
+    })
+
+    it('throws when an item is missing a key present in the first item', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        insertMany({
+          tableName: 'users',
+          dbClient,
+          data: [{ name: 'John', email: 'john@example.com' }, { name: 'Jane' }],
+        })
+      ).rejects.toThrow(
+        'insertMany: item at index 1 has different keys than the first item. Missing: [email].'
+      )
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('throws when an item has an unexpected extra key', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        insertMany({
+          tableName: 'users',
+          dbClient,
+          data: [{ name: 'John' }, { name: 'Jane', role: 'admin' }],
+        })
+      ).rejects.toThrow(
+        'insertMany: item at index 1 has different keys than the first item. Unexpected: [role].'
+      )
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
     it('quotes reserved-word column names for pg', async () => {
       const dbClient = createMockDbClient('pg')
       dbClient.query.mockResolvedValue([{ id: 'generated-uuid' }])

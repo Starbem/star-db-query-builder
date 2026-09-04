@@ -273,6 +273,22 @@ export const insertMany = async <P, R>({
   const rawKeys = Object.keys(firstItem)
   rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
 
+  const rawKeySet = new Set(rawKeys)
+  data.forEach((item, index) => {
+    const itemKeys = Object.keys(item as Record<string, any>)
+    const itemKeySet = new Set(itemKeys)
+    const missing = rawKeys.filter((key) => !itemKeySet.has(key))
+    const extra = itemKeys.filter((key) => !rawKeySet.has(key))
+
+    if (missing.length > 0 || extra.length > 0) {
+      throw new Error(
+        `insertMany: item at index ${index} has different keys than the first item.` +
+          (missing.length > 0 ? ` Missing: [${missing.join(', ')}].` : '') +
+          (extra.length > 0 ? ` Unexpected: [${extra.join(', ')}].` : '')
+      )
+    }
+  })
+
   const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
 
   const allKeys = [
@@ -288,7 +304,8 @@ export const insertMany = async <P, R>({
   const generatedIds: string[] = []
 
   data.forEach((item, rowIndex) => {
-    const values = Object.values(item as Record<string, any>)
+    const record = item as Record<string, any>
+    const values = rawKeys.map((key) => record[key])
     const generatedUUID: string = uuid()
     generatedIds.push(generatedUUID)
     const currentValues = [generatedUUID, ...values, new Date()]
