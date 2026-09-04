@@ -5,7 +5,12 @@ import { createMysqlClient } from './mysqlClient'
 import { IDatabaseClient } from './IDatabaseClient'
 import { DBClients, RetryOptions } from '../core/types'
 
+interface ClosablePool {
+  end: () => Promise<void>
+}
+
 const dbClients: Record<string, IDatabaseClient> = {}
+const dbPools: Record<string, ClosablePool> = {}
 const defaultName = 'default'
 
 /**
@@ -67,25 +72,26 @@ export const initDb = async <T>(config: {
 
   if (!config.options) throw new Error('Connection options is required')
 
+  const key = config.name || defaultName
+
   if (config.type === 'pg') {
     const poolConfig = config.options as unknown as PoolConfig
     const pool = new Pool(config.options)
-    dbClients[config.name || defaultName] = await createPgClient(
+    dbClients[key] = await createPgClient(
       pool,
       config.retryOptions,
       poolConfig,
       config.installUnaccentExtension
     )
+    dbPools[key] = pool
 
     console.log(
       `@starbemtech/star-db-query-builder: Postgres db client "${config.name}" created successfully`
     )
   } else if (config.type === 'mysql') {
     const pool = createMySqlPool(config.options)
-    dbClients[config.name || defaultName] = createMysqlClient(
-      pool,
-      config.retryOptions
-    )
+    dbClients[key] = createMysqlClient(pool, config.retryOptions)
+    dbPools[key] = pool
 
     console.info(
       `@starbemtech/star-db-query-builder: Postgres db client "${config.name}" created successfully`
@@ -178,4 +184,47 @@ export const getDbClient = (name?: string): IDatabaseClient => {
  */
 export const getAllDbClients = (): Record<string, IDatabaseClient> => {
   return dbClients
+}
+
+/**
+ * Closes a database client's connection pool and removes it from the registry
+ *
+ * Use this to release connections gracefully on application shutdown or
+ * between tests, since `initDb` has no other way to release the pools it
+ * creates.
+ *
+ * @param name - Optional name of the database client to close. If not provided, closes the default client
+ * @returns Promise<void> - Resolves when the pool has been closed
+ *
+ * @throws {Error} When the specified database client name is not found or not initialized
+ *
+ * @example
+ * await closeDb() // closes the default client
+ *
+ * @example
+ * await closeDb('myPostgresDb')
+ */
+export const closeDb = async (name?: string): Promise<void> => {
+  const key = name || defaultName
+  const pool = dbPools[key]
+
+  if (!pool) {
+    throw new Error(`Database client "${key}" is not initialized`)
+  }
+
+  await pool.end()
+  delete dbPools[key]
+  delete dbClients[key]
+}
+
+/**
+ * Closes every registered database client's connection pool
+ *
+ * @returns Promise<void> - Resolves when all pools have been closed
+ *
+ * @example
+ * await closeAllDbClients()
+ */
+export const closeAllDbClients = async (): Promise<void> => {
+  await Promise.all(Object.keys(dbPools).map((key) => closeDb(key)))
 }
