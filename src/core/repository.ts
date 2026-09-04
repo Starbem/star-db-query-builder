@@ -395,6 +395,8 @@ export const update = async <P, R>({
   if (!dbClient) throw new Error('DB client is required')
   if (!id) throw new Error('ID is required')
   if (!data) throw new Error('Data object is required')
+  if (Object.keys(data).length === 0)
+    throw new Error('Data object must have at least one field to update')
 
   const keys = Object.keys(data)
   const values: any[] = Object.values(data)
@@ -468,6 +470,8 @@ export const updateMany = async <P, R>({
   assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
+  if (Object.keys(data).length === 0)
+    throw new Error('Data object must have at least one field to update')
   if (!where) throw new Error('Where condition is required')
 
   const keys = Object.keys(data)

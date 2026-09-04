@@ -324,6 +324,14 @@ describe('repository', () => {
       ).rejects.toThrow('ID is required')
     })
 
+    it('throws when data has no fields to update', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        update({ tableName: 'users', dbClient, id: '123', data: {} })
+      ).rejects.toThrow('Data object must have at least one field to update')
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
     it('parameterizes the id instead of concatenating it into the SQL string (pg)', async () => {
       const dbClient = createMockDbClient('pg')
       dbClient.query.mockResolvedValue([{ id: '123', name: 'John Updated' }])
@@ -392,6 +400,19 @@ describe('repository', () => {
           where: undefined,
         } as any)
       ).rejects.toThrow('Where condition is required')
+    })
+
+    it('throws when data has no fields to update', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        updateMany({
+          tableName: 'users',
+          dbClient,
+          data: {},
+          where: { status: { operator: '=', value: 'pending' } },
+        })
+      ).rejects.toThrow('Data object must have at least one field to update')
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
 
     it('places WHERE placeholders after SET placeholders', async () => {
