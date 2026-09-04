@@ -1,6 +1,73 @@
 import { Conditions, Condition, OrderBy, DBClients } from './types'
 
 /**
+ * Matches a bare SQL identifier, optionally schema/table-qualified
+ * (e.g. "id", "users", "users.id"). Used to validate table names,
+ * GROUP BY / ORDER BY fields, join tables and delete-by fields, since
+ * those are always plain identifiers and never need SQL expressions.
+ */
+const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/
+
+/**
+ * Matches characters that have no legitimate use inside a SELECT
+ * expression or a JOIN ON condition (statement terminators, comment
+ * markers, backticks) but that are the building blocks of classic
+ * SQL injection (stacked queries, comment-based truncation).
+ */
+const DANGEROUS_SQL_PATTERN = /(;|--|\/\*|\*\/|`)/
+
+/**
+ * Validates that a value is a safe, bare SQL identifier
+ *
+ * This function throws when the value is anything other than a plain
+ * identifier (letters, digits, underscore, optionally schema/table-qualified
+ * with a single dot). It exists to stop identifiers coming from untrusted
+ * input (table names, column names) from being used to inject arbitrary SQL,
+ * since this library interpolates identifiers directly into the query string.
+ *
+ * @param value - The identifier to validate
+ * @param label - A human-readable label used in the error message
+ * @throws {Error} When the value is not a valid identifier
+ *
+ * @example
+ * assertValidIdentifier('users', 'table name') // ok
+ * assertValidIdentifier('users; DROP TABLE users', 'table name') // throws
+ */
+export const assertValidIdentifier = (value: string, label: string): void => {
+  if (typeof value !== 'string' || !IDENTIFIER_PATTERN.test(value)) {
+    throw new Error(
+      `Invalid ${label}: "${value}". Only letters, numbers, underscores and a single dot (schema.table or table.column) are allowed.`
+    )
+  }
+}
+
+/**
+ * Validates that a raw SQL fragment does not contain statement terminators,
+ * comment markers or backticks
+ *
+ * Some parts of a query (SELECT fields, JOIN ON conditions) are allowed to
+ * be full SQL expressions (e.g. "COUNT(*) as total"), so they cannot be
+ * restricted to bare identifiers. This function instead blocks the
+ * characters that have no legitimate use in those positions and that are
+ * the building blocks of stacked-query and comment-based SQL injection.
+ *
+ * @param value - The SQL fragment to validate
+ * @param label - A human-readable label used in the error message
+ * @throws {Error} When the fragment contains disallowed characters
+ *
+ * @example
+ * assertSafeSqlFragment('COUNT(*) as total', 'select field') // ok
+ * assertSafeSqlFragment('id; DROP TABLE users; --', 'select field') // throws
+ */
+export const assertSafeSqlFragment = (value: string, label: string): void => {
+  if (typeof value !== 'string' || DANGEROUS_SQL_PATTERN.test(value)) {
+    throw new Error(
+      `Invalid ${label}: "${value}" contains disallowed characters (; -- /* */ \`).`
+    )
+  }
+}
+
+/**
  * Converts an array of strings to a comma-separated string with quotes
  *
  * This function takes an array of strings and converts it to a comma-separated string
@@ -77,9 +144,11 @@ export const createSelectFields = (
   fields: string[] = [],
   clientType: DBClients
 ): string => {
-  return fields && fields.length > 0
-    ? arrayToStringWithQuotes(fields, clientType)
-    : '*'
+  if (!fields || fields.length === 0) return '*'
+
+  fields.forEach((field) => assertSafeSqlFragment(field, 'select field'))
+
+  return arrayToStringWithQuotes(fields, clientType)
 }
 
 /**
@@ -295,7 +364,17 @@ export const createWhereClause = <T>(
  */
 export const createOrderByClause = (orderBy?: OrderBy) => {
   if (!orderBy || orderBy.length === 0) return ''
-  const clause = orderBy.map((o) => `${o.field} ${o.direction}`).join(', ')
+  const clause = orderBy
+    .map((o) => {
+      assertSafeSqlFragment(o.field, 'orderBy field')
+      if (o.direction !== 'ASC' && o.direction !== 'DESC') {
+        throw new Error(
+          `Invalid orderBy direction: "${o.direction}". Only ASC or DESC are allowed.`
+        )
+      }
+      return `${o.field} ${o.direction}`
+    })
+    .join(', ')
   return ` ORDER BY ${clause}`
 }
 
@@ -315,6 +394,7 @@ export const createOrderByClause = (orderBy?: OrderBy) => {
  */
 export const createGroupByClause = (groupBy?: string[]) => {
   if (!groupBy || groupBy.length === 0) return ''
+  groupBy.forEach((field) => assertSafeSqlFragment(field, 'groupBy field'))
   return ` GROUP BY ${groupBy.join(', ')}`
 }
 

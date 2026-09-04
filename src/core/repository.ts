@@ -10,7 +10,11 @@ import {
   createWhereClause,
   generateSetClause,
   createOffsetClause,
+  assertValidIdentifier,
+  assertSafeSqlFragment,
 } from './utils'
+
+const JOIN_TYPES = new Set(['INNER', 'LEFT', 'RIGHT', 'FULL'])
 
 /**
  * Finds the first record in the specified table
@@ -54,6 +58,7 @@ export const findFirst = async <T>({
   orderBy,
 }: QueryParams<T>): Promise<T | null> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
 
   const fields = createSelectFields(select, dbClient.clientType)
@@ -116,6 +121,7 @@ export const findMany = async <T>({
   unaccent,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
 
   const fields = createSelectFields(select, dbClient.clientType)
@@ -175,6 +181,7 @@ export const insert = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P; returning?: string[] }): Promise<R> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
 
@@ -258,6 +265,7 @@ export const insertMany = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P[]; returning?: string[] }): Promise<R[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data || data.length === 0)
     throw new Error('Data array is required and cannot be empty')
@@ -365,6 +373,7 @@ export const update = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P; returning?: string[] }): Promise<R | void> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!id) throw new Error('ID is required')
   if (!data) throw new Error('Data object is required')
@@ -373,7 +382,10 @@ export const update = async <P, R>({
   const values: any[] = Object.values(data)
 
   const setClause = generateSetClause(keys, dbClient.clientType)
-  let query = `UPDATE ${tableName} SET ${setClause} WHERE id = '${id}'`
+  const idPlaceholder =
+    dbClient.clientType === 'pg' ? `$${values.length + 1}` : '?'
+  let query = `UPDATE ${tableName} SET ${setClause} WHERE id = ${idPlaceholder}`
+  values.push(id)
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
@@ -435,6 +447,7 @@ export const updateMany = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P; returning?: string[] }): Promise<R[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
   if (!where) throw new Error('Where condition is required')
@@ -456,7 +469,7 @@ export const updateMany = async <P, R>({
     dbClient.clientType
   )
 
-  let query = `UPDATE ${tableName} SET ${setClause} ${whereClause}`
+  let query = `UPDATE ${tableName} SET ${setClause}${whereClause}`
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
@@ -515,6 +528,7 @@ export const deleteOne = async <T>({
   permanently = false,
 }: QueryParams<T> & { permanently?: boolean }): Promise<void> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!id) throw new Error('ID is required')
 
@@ -566,10 +580,12 @@ export const deleteMany = async <T>({
   permanently?: boolean
 }): Promise<void> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!ids || ids.length === 0)
     throw new Error('IDs are required and cannot be empty')
   if (!field) throw new Error('Field is required')
+  assertValidIdentifier(field, 'field')
 
   const placeholders =
     dbClient.clientType === 'pg'
@@ -625,7 +641,20 @@ export const joins = async <T>({
   unaccent,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
+
+  if (joins) {
+    joins.forEach((join) => {
+      if (!JOIN_TYPES.has(join.type)) {
+        throw new Error(
+          `Invalid join type: "${join.type}". Only INNER, LEFT, RIGHT or FULL are allowed.`
+        )
+      }
+      assertValidIdentifier(join.table, 'join table')
+      assertSafeSqlFragment(join.on, 'join on condition')
+    })
+  }
 
   const fields = Array.isArray(select) ? select : []
   const selectFields = createSelectFields(fields, dbClient.clientType)
