@@ -4,6 +4,7 @@ import {
   getAllDbClients,
   closeDb,
   closeAllDbClients,
+  resetDbClients,
 } from '../initDb'
 import { Pool } from 'pg'
 import { createPool as createMySqlPool } from 'mysql2/promise'
@@ -55,6 +56,10 @@ describe('initDb / getDbClient / closeDb', () => {
 
   afterEach(() => {
     jest.clearAllMocks()
+    // Without this, the module-level client/pool registry would leak
+    // between tests, forcing every test in this file to invent a unique
+    // name just to avoid colliding with clients registered by earlier tests.
+    resetDbClients()
   })
 
   describe('initDb', () => {
@@ -76,14 +81,14 @@ describe('initDb / getDbClient / closeDb', () => {
       ).rejects.toThrow('Unsupported database type')
     })
 
-    it('registers a named pg client', async () => {
-      await initDb({ name: 'init-pg-1', type: 'pg', options: {} })
-      expect(getDbClient('init-pg-1').clientType).toBe('pg')
+    it('registers a pg client under the default name', async () => {
+      await initDb({ type: 'pg', options: {} })
+      expect(getDbClient().clientType).toBe('pg')
     })
 
     it('registers a named mysql client', async () => {
-      await initDb({ name: 'init-mysql-1', type: 'mysql', options: {} })
-      expect(getDbClient('init-mysql-1').clientType).toBe('mysql')
+      await initDb({ name: 'secondary', type: 'mysql', options: {} })
+      expect(getDbClient('secondary').clientType).toBe('mysql')
     })
   })
 
@@ -103,41 +108,19 @@ describe('initDb / getDbClient / closeDb', () => {
 
   describe('getAllDbClients', () => {
     it('returns every registered client', async () => {
-      await initDb({ name: 'all-a', type: 'pg', options: {} })
-      await initDb({ name: 'all-b', type: 'mysql', options: {} })
+      await initDb({ type: 'pg', options: {} })
+      await initDb({ name: 'secondary', type: 'mysql', options: {} })
 
       const clients = getAllDbClients()
 
       expect(Object.keys(clients)).toEqual(
-        expect.arrayContaining(['all-a', 'all-b'])
+        expect.arrayContaining(['default', 'secondary'])
       )
     })
   })
 
   describe('closeDb', () => {
     it('ends the pg pool and removes the client from the registry', async () => {
-      await initDb({ name: 'close-pg-1', type: 'pg', options: {} })
-
-      await closeDb('close-pg-1')
-
-      expect(mockPgPool.end).toHaveBeenCalled()
-      expect(() => getDbClient('close-pg-1')).toThrow(
-        'Database client "close-pg-1" is not initialized'
-      )
-    })
-
-    it('ends the mysql pool and removes the client from the registry', async () => {
-      await initDb({ name: 'close-mysql-1', type: 'mysql', options: {} })
-
-      await closeDb('close-mysql-1')
-
-      expect(mockMysqlPool.end).toHaveBeenCalled()
-      expect(() => getDbClient('close-mysql-1')).toThrow(
-        'Database client "close-mysql-1" is not initialized'
-      )
-    })
-
-    it('closes the default client when no name is given', async () => {
       await initDb({ type: 'pg', options: {} })
 
       await closeDb()
@@ -145,6 +128,17 @@ describe('initDb / getDbClient / closeDb', () => {
       expect(mockPgPool.end).toHaveBeenCalled()
       expect(() => getDbClient()).toThrow(
         'Database client "default" is not initialized'
+      )
+    })
+
+    it('ends the mysql pool and removes the client from the registry', async () => {
+      await initDb({ name: 'secondary', type: 'mysql', options: {} })
+
+      await closeDb('secondary')
+
+      expect(mockMysqlPool.end).toHaveBeenCalled()
+      expect(() => getDbClient('secondary')).toThrow(
+        'Database client "secondary" is not initialized'
       )
     })
 
@@ -157,15 +151,38 @@ describe('initDb / getDbClient / closeDb', () => {
 
   describe('closeAllDbClients', () => {
     it('closes every registered pool', async () => {
-      await initDb({ name: 'close-all-x', type: 'pg', options: {} })
-      await initDb({ name: 'close-all-y', type: 'mysql', options: {} })
+      await initDb({ type: 'pg', options: {} })
+      await initDb({ name: 'secondary', type: 'mysql', options: {} })
 
       await closeAllDbClients()
 
       expect(mockPgPool.end).toHaveBeenCalled()
       expect(mockMysqlPool.end).toHaveBeenCalled()
-      expect(() => getDbClient('close-all-x')).toThrow()
-      expect(() => getDbClient('close-all-y')).toThrow()
+      expect(() => getDbClient()).toThrow()
+      expect(() => getDbClient('secondary')).toThrow()
+    })
+  })
+
+  describe('resetDbClients', () => {
+    it('clears the registry without calling pool.end()', async () => {
+      await initDb({ type: 'pg', options: {} })
+
+      resetDbClients()
+
+      expect(mockPgPool.end).not.toHaveBeenCalled()
+      expect(() => getDbClient()).toThrow(
+        'Database client "default" is not initialized'
+      )
+      expect(getAllDbClients()).toEqual({})
+    })
+
+    it('lets a name be reused right away without awaiting a real close', async () => {
+      await initDb({ type: 'pg', options: {} })
+      resetDbClients()
+
+      await initDb({ name: 'default', type: 'mysql', options: {} })
+
+      expect(getDbClient().clientType).toBe('mysql')
     })
   })
 })

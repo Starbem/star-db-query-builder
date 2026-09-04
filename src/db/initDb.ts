@@ -191,3 +191,23 @@ export const closeDb = async (name?: string): Promise<void> => {
 export const closeAllDbClients = async (): Promise<void> => {
   await Promise.all(Object.keys(dbPools).map((key) => closeDb(key)))
 }
+
+/**
+ * Clears the in-memory client/pool registry without closing any connection
+ *
+ * This is a synchronous escape hatch for test suites and hot-reload tooling
+ * that need a clean registry between runs (e.g. calling `initDb` again with
+ * the same name without first awaiting a real `closeDb`). It does NOT call
+ * `pool.end()`, so any real (non-mocked) connection pool that was registered
+ * is orphaned — leaked, not released. Production code that wants to release
+ * connections should use `closeDb`/`closeAllDbClients` instead.
+ *
+ * @example
+ * afterEach(() => {
+ *   resetDbClients() // test isolation only — pools here are mocked
+ * })
+ */
+export const resetDbClients = (): void => {
+  Object.keys(dbClients).forEach((key) => delete dbClients[key])
+  Object.keys(dbPools).forEach((key) => delete dbPools[key])
+}
