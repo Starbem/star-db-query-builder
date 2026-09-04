@@ -90,6 +90,38 @@ describe('initDb / getDbClient / closeDb', () => {
       await initDb({ name: 'secondary', type: 'mysql', options: {} })
       expect(getDbClient('secondary').clientType).toBe('mysql')
     })
+
+    it('maps queryTimeout onto the pg pool as query_timeout', async () => {
+      await initDb({ type: 'pg', options: { host: 'localhost' }, queryTimeout: 3000 })
+
+      expect(Pool).toHaveBeenCalledWith(
+        expect.objectContaining({ host: 'localhost', query_timeout: 3000 })
+      )
+    })
+
+    it('does not override an explicit query_timeout already set on pg options', async () => {
+      await initDb({
+        type: 'pg',
+        options: { query_timeout: 9000 },
+        queryTimeout: 3000,
+      })
+
+      expect(Pool).toHaveBeenCalledWith(
+        expect.objectContaining({ query_timeout: 9000 })
+      )
+    })
+
+    it('passes queryTimeout through so every mysql query uses it', async () => {
+      mockMysqlPool.execute.mockResolvedValue([[{ id: 1 }], []])
+
+      await initDb({ type: 'mysql', options: {}, queryTimeout: 4000 })
+      await getDbClient().query('SELECT 1')
+
+      expect(mockMysqlPool.execute).toHaveBeenCalledWith(
+        { sql: 'SELECT 1', timeout: 4000 },
+        undefined
+      )
+    })
   })
 
   describe('getDbClient', () => {

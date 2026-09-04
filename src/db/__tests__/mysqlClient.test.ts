@@ -78,6 +78,32 @@ describe('MySqlClient', () => {
       expect(result).toEqual(mockRows)
     })
 
+    it('passes a query timeout to pool.execute when configured', async () => {
+      const mockRows = [{ id: 1 }]
+      mockPool.execute.mockResolvedValue([mockRows, []] as any)
+
+      const client = createMysqlClient(mockPool, undefined, 5000)
+      await client.query('SELECT * FROM users WHERE id = ?', [1])
+
+      expect(mockPool.execute).toHaveBeenCalledWith(
+        { sql: 'SELECT * FROM users WHERE id = ?', timeout: 5000 },
+        [1]
+      )
+    })
+
+    it('does not wrap the query in an options object when no timeout is configured', async () => {
+      const mockRows = [{ id: 1 }]
+      mockPool.execute.mockResolvedValue([mockRows, []] as any)
+
+      const client = createMysqlClient(mockPool)
+      await client.query('SELECT * FROM users WHERE id = ?', [1])
+
+      expect(mockPool.execute).toHaveBeenCalledWith(
+        'SELECT * FROM users WHERE id = ?',
+        [1]
+      )
+    })
+
     it('should handle empty result set', async () => {
       mockPool.execute.mockResolvedValue([[], []] as any)
 
@@ -204,6 +230,20 @@ describe('MySqlClient', () => {
           [1]
         )
         expect(result).toEqual(mockRows)
+      })
+
+      it('passes a query timeout to connection.execute when configured', async () => {
+        const mockRows = [{ id: 1 }]
+        mockConnection.execute.mockResolvedValue([mockRows, []])
+
+        const client = createMysqlClient(mockPool, undefined, 5000)
+        const transaction = await client.beginTransaction()
+        await transaction.query('SELECT * FROM users WHERE id = ?', [1])
+
+        expect(mockConnection.execute).toHaveBeenCalledWith(
+          { sql: 'SELECT * FROM users WHERE id = ?', timeout: 5000 },
+          [1]
+        )
       })
 
       it('should commit transaction successfully', async () => {

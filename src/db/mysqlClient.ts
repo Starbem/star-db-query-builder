@@ -46,23 +46,19 @@ function isTransientError(error: any): boolean {
  *
  * @param pool - The MySQL pool instance
  * @param retryOptions - Optional retry options for failed queries
+ * @param queryTimeout - Optional query timeout in milliseconds, applied to every query since mysql2 has no pool-wide timeout option (only a per-query one)
  * @returns IDatabaseClient - The MySQL database client instance
  *
  * @example
  * const mysqlClient = createMysqlClient(pool, { retries: 3, factor: 2, minTimeout: 1000 });
  *
  * @example
- * const mysqlClient = createMysqlClient(pool, { retries: 3, factor: 2, minTimeout: 1000 });
- *
- * @example
- * const mysqlClient = createMysqlClient(pool, { retries: 3, factor: 2, minTimeout: 1000 });
- *
- * @example
- * const mysqlClient = createMysqlClient(pool, { retries: 3, factor: 2, minTimeout: 1000 });
+ * const mysqlClient = createMysqlClient(pool, undefined, 5000); // 5s query timeout
  */
 export const createMysqlClient = (
   pool: Pool,
-  retryOptions?: RetryOptions
+  retryOptions?: RetryOptions,
+  queryTimeout?: number
 ): IDatabaseClient => {
   monitor.emit(MonitorEvents.CONNECTION_CREATED, {
     clientType: 'mysql',
@@ -82,7 +78,9 @@ export const createMysqlClient = (
             attempt,
           })
 
-          const [rows] = await pool.execute(sql, params)
+          const [rows] = queryTimeout
+            ? await pool.execute({ sql, timeout: queryTimeout }, params)
+            : await pool.execute(sql, params)
 
           const elapsedTime = Date.now() - startTime
           monitor.emit(MonitorEvents.QUERY_END, {
@@ -139,7 +137,12 @@ export const createMysqlClient = (
                 inTransaction: true,
               })
 
-              const [rows] = await connection.execute(sql, params)
+              const [rows] = queryTimeout
+                ? await connection.execute(
+                    { sql, timeout: queryTimeout },
+                    params
+                  )
+                : await connection.execute(sql, params)
 
               const elapsedTime = Date.now() - startTime
               monitor.emit(MonitorEvents.QUERY_END, {

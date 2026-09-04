@@ -23,6 +23,7 @@ const defaultName = 'default'
  * @param config.options - Connection options specific to the database type
  * @param config.retryOptions - Optional retry configuration for failed queries
  * @param config.installUnaccentExtension - Optional flag to install unaccent extension (PostgreSQL only)
+ * @param config.queryTimeout - Optional query timeout in milliseconds, applied to every query run through this client. For PostgreSQL this maps onto the pool's `query_timeout` (an explicit `query_timeout` in `options` takes precedence). For MySQL, since mysql2 has no pool-wide query timeout, it is passed as the `timeout` option on every individual query.
  * @returns Promise<void> - Resolves when the database client is successfully initialized
  *
  * @throws {Error} When type is not provided or is invalid
@@ -42,7 +43,8 @@ const defaultName = 'default'
  *     password: 'password'
  *   },
  *   retryOptions: { maxRetries: 3, delay: 1000 },
- *   installUnaccentExtension: true
+ *   installUnaccentExtension: true,
+ *   queryTimeout: 5000
  * });
  *
  * @example
@@ -57,7 +59,8 @@ const defaultName = 'default'
  *     user: 'user',
  *     password: 'password'
  *   },
- *   retryOptions: { maxRetries: 3, delay: 1000 }
+ *   retryOptions: { maxRetries: 3, delay: 1000 },
+ *   queryTimeout: 5000
  * });
  */
 export const initDb = async <T>(config: {
@@ -66,6 +69,7 @@ export const initDb = async <T>(config: {
   options: T
   retryOptions?: RetryOptions
   installUnaccentExtension?: boolean
+  queryTimeout?: number
 }): Promise<void> => {
   if (!config.type)
     throw new Error('Type is required. Accept values: pg | mysql')
@@ -75,8 +79,12 @@ export const initDb = async <T>(config: {
   const key = config.name || defaultName
 
   if (config.type === 'pg') {
-    const poolConfig = config.options as unknown as PoolConfig
-    const pool = new Pool(config.options)
+    const options = config.options as unknown as PoolConfig
+    const poolConfig: PoolConfig =
+      config.queryTimeout && options.query_timeout === undefined
+        ? { ...options, query_timeout: config.queryTimeout }
+        : options
+    const pool = new Pool(poolConfig)
     dbClients[key] = await createPgClient(
       pool,
       config.retryOptions,
@@ -86,7 +94,11 @@ export const initDb = async <T>(config: {
     dbPools[key] = pool
   } else if (config.type === 'mysql') {
     const pool = createMySqlPool(config.options)
-    dbClients[key] = createMysqlClient(pool, config.retryOptions)
+    dbClients[key] = createMysqlClient(
+      pool,
+      config.retryOptions,
+      config.queryTimeout
+    )
     dbPools[key] = pool
   } else {
     throw new Error('Unsupported database type')
