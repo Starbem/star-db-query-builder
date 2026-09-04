@@ -248,6 +248,34 @@ describe('utils', () => {
       expect(values).toEqual(['active', 'admin'])
     })
 
+    it('combines JOINS conditions into their own AND group', () => {
+      const [clause, values] = createWhereClause(
+        {
+          JOINS: [
+            { user_id: { operator: '=', value: '1' } },
+            { active: { operator: '=', value: true } },
+          ],
+        } as any,
+        1,
+        'pg'
+      )
+      expect(clause).toBe(' WHERE (user_id = $1 AND active = $2)')
+      expect(values).toEqual(['1', true])
+    })
+
+    it('does not drop sibling conditions when JOINS is present', () => {
+      const [clause, values] = createWhereClause(
+        {
+          status: { operator: '=', value: 'active' },
+          JOINS: [{ user_id: { operator: '=', value: '1' } }],
+        } as any,
+        1,
+        'pg'
+      )
+      expect(clause).toBe(' WHERE status = $1 AND (user_id = $2)')
+      expect(values).toEqual(['active', '1'])
+    })
+
     it('starts placeholder numbering from the given startIndex', () => {
       const [clause, values] = createWhereClause(
         { status: { operator: '=', value: 'active' } },

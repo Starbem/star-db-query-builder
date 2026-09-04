@@ -307,8 +307,12 @@ export const createWhereClause = <T>(
     }
   }
 
+  Object.entries(conditions).forEach(([key, value]) => {
+    if (key === 'JOINS' || key === 'OR' || key === 'AND') return
+    processCondition(key, value as Condition<T>)
+  })
+
   if ('JOINS' in conditions) {
-    const logicalOperator = conditions.JOINS ? 'AND' : 'OR'
     const compositeConditions = conditions.JOINS
 
     if (Array.isArray(compositeConditions)) {
@@ -330,12 +334,8 @@ export const createWhereClause = <T>(
         })
         .filter((part) => part)
 
-      whereParts.push(`(${subWhereParts.join(` ${logicalOperator} `)})`)
+      whereParts.push(`(${subWhereParts.join(' AND ')})`)
     }
-  } else {
-    Object.entries(conditions).forEach(([key, value]) =>
-      processCondition(key, value as Condition<T>)
-    )
   }
 
   if ('OR' in conditions || 'AND' in conditions) {
