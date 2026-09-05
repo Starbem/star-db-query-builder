@@ -5,6 +5,9 @@
   "author": "Julio Sousa <julio.sousa@starbem.app>",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "star-db-query-builder-install-skill": "./bin/install-skill.js"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=18"

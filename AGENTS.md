@@ -92,6 +92,12 @@ If you touch either workflow, keep this pattern (matches `starbem-cli` and `reac
 - `docs/INDEX.md` must only link files that exist. If a method has no dedicated doc yet, list it under "Not documented here yet" instead of inventing a link.
 - When you add a new documented method, add it in three places: `docs/methods/<name>.md`, an entry (with link) in `docs/INDEX.md`, and a section + inline `📖 Full docs` link in `README.md`.
 
+## Distributing the usage skill to consuming repos
+
+`.claude/skills/star-db-query-builder/SKILL.md` in this repo is the AI-agent usage skill for this library (method signatures, gotchas, no-ORM conventions). It ships inside the published npm package (confirmed via `npm pack --dry-run` — no `files`/`.npmignore` entry excludes `.claude/`). `bin/install-skill.js` (registered as `star-db-query-builder-install-skill`) copies it from `node_modules/@starbemtech/star-db-query-builder/.claude/skills/...` into the consuming repo's own `.claude/skills/star-db-query-builder/SKILL.md`, since Claude Code does not scan `node_modules` for skills on its own. Consumers run `npx star-db-query-builder-install-skill` from their repo root and commit the result — see the README's "AI agent skill" section.
+
+If you edit the skill content, the change only reaches consumers the next time they run the install command after upgrading the package — it is not automatically pushed. There is no built-in staleness check beyond a byte-for-byte diff at install time.
+
 ## Known open items (check before assuming these are done)
 
 - Major dependency bumps intentionally deferred as of the last dependency pass: `uuid` (11→14), `jest`/`@types/jest` (29→30), `eslint-plugin-jest` (28→29), `eslint` 10, `lint-staged` 17, `typescript` 7, `globals` 17, `@types/node` 26. Each needs its own validation pass, not a blind bump.

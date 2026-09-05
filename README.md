@@ -78,6 +78,16 @@ pnpm add @starbemtech/star-db-query-builder
 yarn add @starbemtech/star-db-query-builder
 ```
 
+### 🤖 AI agent skill (Claude Code)
+
+If your team uses Claude Code, install the bundled skill so agents get correct usage guidance (method signatures, gotchas like the `update()` operator shape, `upsert()` mysql constraint requirement, etc.) instead of guessing:
+
+```bash
+npx star-db-query-builder-install-skill
+```
+
+Run it from your repo's root, after installing this package. It copies the skill into `.claude/skills/star-db-query-builder/SKILL.md` in your repo — commit that file so the rest of the team gets it too. Safe to re-run after upgrading the package; it re-syncs from whatever version is currently installed.
+
 ## Quick Start
 
 ```typescript
