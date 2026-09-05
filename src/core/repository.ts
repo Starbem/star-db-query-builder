@@ -82,6 +82,7 @@ export const findFirst = async <T>({
       ${whereClause}
       ${groupByClause}
       ${orderByClause}
+      LIMIT 1
       `,
     params
   )

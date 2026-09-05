@@ -382,7 +382,7 @@ const userExists = async (email: string): Promise<boolean> => {
 
 - **Indexes**: Ensure proper indexes exist on fields used in WHERE clauses
 - **Field Selection**: Use `select` to limit returned fields when possible
-- **Limit Results**: `findFirst` automatically limits to 1 result, which is optimal
+- **Limit Results**: `findFirst` appends `LIMIT 1` to the generated SQL (since 2026-09-04) — the database itself stops after the first match instead of the driver fetching every matching row and discarding all but the first
 - **Connection Pooling**: Use connection pooling for better performance in high-traffic applications
 
 ## Error Messages

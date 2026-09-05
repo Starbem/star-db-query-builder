@@ -79,6 +79,18 @@ describe('repository', () => {
       )
     })
 
+    it('limits the query to 1 row instead of fetching the whole match', async () => {
+      const dbClient = createMockDbClient()
+      dbClient.query.mockResolvedValue([{ id: '1' }])
+
+      await findFirst({ tableName: 'users', dbClient })
+
+      expect(dbClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('LIMIT 1'),
+        []
+      )
+    })
+
     it('returns null when no row is found', async () => {
       const dbClient = createMockDbClient()
       dbClient.query.mockResolvedValue([])

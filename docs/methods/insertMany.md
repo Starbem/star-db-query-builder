@@ -228,7 +228,7 @@ const allUsers = await insertUsersInBatches(largeUserDataset, 50)
 ### PostgreSQL
 
 ```sql
-INSERT INTO users (id, name, email, age, updated_at)
+INSERT INTO users ("id", "name", "email", "age", "updated_at")
 VALUES
   ($1, $2, $3, $4, $5),
   ($6, $7, $8, $9, $10),
@@ -239,7 +239,7 @@ RETURNING *
 ### MySQL
 
 ```sql
-INSERT INTO users (id, name, email, age, updated_at)
+INSERT INTO users (`id`, `name`, `email`, `age`, `updated_at`)
 VALUES
   (?, ?, ?, ?, ?),
   (?, ?, ?, ?, ?),
@@ -253,12 +253,14 @@ ORDER BY FIELD(id, ?, ?, ?)
 ### With Specific Returning Fields (PostgreSQL)
 
 ```sql
-INSERT INTO users (id, name, email, age, updated_at)
+INSERT INTO users ("id", "name", "email", "age", "updated_at")
 VALUES
   ($1, $2, $3, $4, $5),
   ($6, $7, $8, $9, $10)
 RETURNING id, name, email, created_at
 ```
+
+> Every column name is quoted (`"col"` on pg, `` `col` `` on mysql, since 2026-09-04) so reserved words like `order` or `user` work as column names.
 
 ## Best Practices
 
