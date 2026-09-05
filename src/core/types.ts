@@ -43,7 +43,13 @@ export type Condition<T> = OperatorCondition | LogicalCondition<T>
 interface LogicalCondition<T> {
   OR?: Conditions<T>[]
   AND?: Conditions<T>[]
-  JOINS?: Conditions<object>
+  /**
+   * A nested AND-group of conditions rendered as its own parenthesized clause,
+   * e.g. `(a = $1 AND b = $2)`. Despite the name this has nothing to do with
+   * SQL JOINs (see the `joins()` query function for that) — it exists
+   * alongside sibling top-level conditions rather than replacing them.
+   */
+  JOINS?: Conditions<object>[]
   notExists?: OperatorCondition
 }
 
@@ -84,6 +90,16 @@ export interface QueryBuilder {
   orderBy?: string
   limit?: string
   offset?: string
+}
+
+export interface CursorPageResult<T> {
+  data: T[]
+  /**
+   * Value of `cursorField` on the last row of `data`, to pass back in as
+   * `cursor` for the next page. `null` when this page reached the end of
+   * the result set (no more rows past it).
+   */
+  nextCursor: string | number | null
 }
 
 export interface RawQueryParams {

@@ -1,6 +1,11 @@
 import { v4 as uuid } from 'uuid'
-import { QueryParams, QueryBuilder, RawQueryParams } from './types'
-import { ITransactionClient } from '../db/IDatabaseClient'
+import {
+  QueryParams,
+  QueryBuilder,
+  RawQueryParams,
+  CursorPageResult,
+} from './types'
+import { IDatabaseClient, ITransactionClient } from '../db/IDatabaseClient'
 import {
   createGroupByClause,
   createLimitClause,
@@ -10,7 +15,14 @@ import {
   createWhereClause,
   generateSetClause,
   createOffsetClause,
+  assertValidIdentifier,
+  assertSafeSqlFragment,
+  assertNoAutoManagedColumns,
+  assertWithinBindParamLimit,
+  quoteIdentifier,
 } from './utils'
+
+const JOIN_TYPES = new Set(['INNER', 'LEFT', 'RIGHT', 'FULL'])
 
 /**
  * Finds the first record in the specified table
@@ -30,7 +42,7 @@ import {
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  * })
@@ -40,7 +52,7 @@ import {
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  * })
@@ -54,6 +66,7 @@ export const findFirst = async <T>({
   orderBy,
 }: QueryParams<T>): Promise<T | null> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
 
   const fields = createSelectFields(select, dbClient.clientType)
@@ -68,9 +81,10 @@ export const findFirst = async <T>({
 
   const rows = await dbClient.query<T[]>(
     `SELECT ${fields} FROM ${tableName}
-      ${whereClause.length > 7 ? whereClause : ''}
+      ${whereClause}
       ${groupByClause}
       ${orderByClause}
+      LIMIT 1
       `,
     params
   )
@@ -96,7 +110,7 @@ export const findFirst = async <T>({
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  *   limit: 10,
@@ -116,6 +130,7 @@ export const findMany = async <T>({
   unaccent,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
 
   const fields = createSelectFields(select, dbClient.clientType)
@@ -133,7 +148,7 @@ export const findMany = async <T>({
 
   const rows = await dbClient.query<T[]>(
     `SELECT ${fields} FROM ${tableName}
-      ${whereClause.length > 7 ? whereClause : ''}
+      ${whereClause}
       ${groupByClause}
       ${orderByClause}
       ${limitClause}
@@ -143,6 +158,119 @@ export const findMany = async <T>({
   )
 
   return rows || []
+}
+
+/**
+ * Finds multiple records in the specified table using keyset (cursor)
+ * pagination instead of offset/limit
+ *
+ * Unlike offset-based pagination, keyset pagination stays O(1) regardless of
+ * how deep the page is (no `OFFSET N` row-skipping) and does not skip/repeat
+ * rows when the underlying data changes between pages. It requires
+ * `cursorField` to be a strictly ordered, indexed column — `id` (if
+ * sequential) or `created_at` are typical choices; a plain UUID `id` works
+ * for uniqueness but its ordering is arbitrary, so prefer a monotonically
+ * increasing column when the page order matters to callers.
+ *
+ * @template T - The type of the records to be returned
+ * @param params - Query parameters including table name, database client, select fields, where conditions, cursor field, cursor value, direction, page size and unaccent
+ * @returns Promise<CursorPageResult<T>> - The page of records plus the cursor to request the next page (`null` when there is no next page)
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When direction is not ASC or DESC
+ *
+ * @example
+ * // First page
+ * const page1 = await findManyCursor({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   where: { status: { operator: '=', value: 'active' } },
+ *   cursorField: 'created_at',
+ *   limit: 20,
+ * })
+ *
+ * @example
+ * // Next page
+ * const page2 = await findManyCursor({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   cursorField: 'created_at',
+ *   cursor: page1.nextCursor,
+ *   limit: 20,
+ * })
+ */
+export const findManyCursor = async <T>({
+  tableName,
+  dbClient,
+  select,
+  where,
+  cursorField = 'id',
+  cursor,
+  direction = 'ASC',
+  limit = 20,
+  unaccent,
+}: QueryParams<T> & {
+  cursorField?: string
+  cursor?: string | number
+  direction?: 'ASC' | 'DESC'
+}): Promise<CursorPageResult<T>> => {
+  if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
+  if (!dbClient) throw new Error('DB client is required')
+  assertValidIdentifier(cursorField, 'cursor field')
+  if (direction !== 'ASC' && direction !== 'DESC') {
+    throw new Error(
+      `Invalid direction: "${direction}". Only ASC or DESC are allowed.`
+    )
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new Error(`Invalid limit: "${limit}". Must be a positive integer.`)
+  }
+
+  const fields = createSelectFields(select, dbClient.clientType)
+  const [whereClause, whereParams, nextIndex] = createWhereClause(
+    where,
+    1,
+    dbClient.clientType,
+    unaccent
+  )
+
+  const params = [...whereParams]
+  let cursorCondition = ''
+  if (cursor !== undefined && cursor !== null) {
+    const operator = direction === 'ASC' ? '>' : '<'
+    const placeholder = dbClient.clientType === 'pg' ? `$${nextIndex}` : '?'
+    cursorCondition = `${cursorField} ${operator} ${placeholder}`
+    params.push(cursor)
+  }
+
+  let combinedWhere = whereClause
+  if (cursorCondition) {
+    combinedWhere = whereClause
+      ? `${whereClause} AND ${cursorCondition}`
+      : ` WHERE ${cursorCondition}`
+  }
+
+  // fetch one extra row to know whether a next page exists without a
+  // separate COUNT query
+  const rows = await dbClient.query<T[]>(
+    `SELECT ${fields} FROM ${tableName}
+      ${combinedWhere}
+      ORDER BY ${cursorField} ${direction}
+      LIMIT ${limit + 1}
+    `,
+    params
+  )
+
+  const hasMore = rows.length > limit
+  const data = hasMore ? rows.slice(0, limit) : rows
+  const lastRow = data[data.length - 1] as Record<string, any> | undefined
+
+  return {
+    data,
+    nextCursor: hasMore && lastRow ? (lastRow[cursorField] ?? null) : null,
+  }
 }
 
 /**
@@ -175,22 +303,22 @@ export const insert = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P; returning?: string[] }): Promise<R> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
 
-  const keys =
-    dbClient.clientType === 'pg'
-      ? Object.keys(data).map((key) =>
-          key === 'authorization' ? `"${key}"` : key
-        )
-      : Object.keys(data)
+  const rawKeys = Object.keys(data)
+  rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+  assertNoAutoManagedColumns(rawKeys, 'insert')
+
+  const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
   const values = Object.values(data)
 
-  keys.unshift('id')
+  keys.unshift(quoteIdentifier('id', dbClient.clientType))
   const generatedUUID: string = uuid()
   values.unshift(generatedUUID)
 
-  keys.push('updated_at')
+  keys.push(quoteIdentifier('updated_at', dbClient.clientType))
   values.push(new Date())
 
   const placeholders = generatePlaceholders(keys, dbClient.clientType)
@@ -258,19 +386,41 @@ export const insertMany = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P[]; returning?: string[] }): Promise<R[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data || data.length === 0)
     throw new Error('Data array is required and cannot be empty')
 
   const firstItem = data[0] as Record<string, any>
-  const keys =
-    dbClient.clientType === 'pg'
-      ? Object.keys(firstItem).map((key) =>
-          key === 'authorization' ? `"${key}"` : key
-        )
-      : Object.keys(firstItem)
+  const rawKeys = Object.keys(firstItem)
+  rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+  assertNoAutoManagedColumns(rawKeys, 'insertMany')
 
-  const allKeys = ['id', ...keys, 'updated_at']
+  const rawKeySet = new Set(rawKeys)
+  data.forEach((item, index) => {
+    const itemKeys = Object.keys(item as Record<string, any>)
+    const itemKeySet = new Set(itemKeys)
+    const missing = rawKeys.filter((key) => !itemKeySet.has(key))
+    const extra = itemKeys.filter((key) => !rawKeySet.has(key))
+
+    if (missing.length > 0 || extra.length > 0) {
+      throw new Error(
+        `insertMany: item at index ${index} has different keys than the first item.` +
+          (missing.length > 0 ? ` Missing: [${missing.join(', ')}].` : '') +
+          (extra.length > 0 ? ` Unexpected: [${extra.join(', ')}].` : '')
+      )
+    }
+  })
+
+  const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
+
+  const allKeys = [
+    quoteIdentifier('id', dbClient.clientType),
+    ...keys,
+    quoteIdentifier('updated_at', dbClient.clientType),
+  ]
+
+  assertWithinBindParamLimit(data.length * allKeys.length, 'insertMany')
 
   let query = `INSERT INTO ${tableName} (${allKeys.join(', ')}) VALUES `
 
@@ -279,7 +429,8 @@ export const insertMany = async <P, R>({
   const generatedIds: string[] = []
 
   data.forEach((item, rowIndex) => {
-    const values = Object.values(item as Record<string, any>)
+    const record = item as Record<string, any>
+    const values = rawKeys.map((key) => record[key])
     const generatedUUID: string = uuid()
     generatedIds.push(generatedUUID)
     const currentValues = [generatedUUID, ...values, new Date()]
@@ -334,6 +485,164 @@ export const insertMany = async <P, R>({
 }
 
 /**
+ * Inserts a record, or updates it in place if it collides with an existing
+ * unique/primary key
+ *
+ * Builds `INSERT ... ON CONFLICT (...) DO UPDATE SET ...` for pg and
+ * `INSERT ... ON DUPLICATE KEY UPDATE ...` for mysql. `conflictFields` must
+ * name columns actually covered by a unique or primary key constraint on
+ * `tableName` — this function does not create or verify that constraint, it
+ * only builds SQL that assumes it exists. For mysql, `conflictFields` is not
+ * part of the generated SQL (`ON DUPLICATE KEY UPDATE` relies on the table's
+ * own constraint) — it is used only to re-select the row afterwards, since
+ * mysql has no `RETURNING`.
+ *
+ * @template P - The type of the data to be upserted
+ * @template R - The type of the record to be returned
+ * @param params - Query parameters including table name, database client, data, conflict target fields, optional fields to update on conflict (defaults to every field in data), and optional returning fields
+ * @returns Promise<R> - The inserted or updated record
+ *
+ * @throws {Error} When table name is not provided
+ * @throws {Error} When database client is not provided
+ * @throws {Error} When data object is not provided
+ * @throws {Error} When conflictFields is not provided or empty
+ *
+ * @example
+ * const record = await upsert({
+ *   tableName: 'users',
+ *   dbClient: dbClient,
+ *   data: { email: 'john.doe@example.com', name: 'John Doe' },
+ *   conflictFields: ['email'],
+ *   returning: ['id', 'name', 'email'],
+ * })
+ */
+export const upsert = async <P, R>({
+  tableName,
+  dbClient,
+  data,
+  conflictFields,
+  updateFields,
+  returning,
+}: QueryParams<R> & {
+  data: P
+  conflictFields: string[]
+  updateFields?: string[]
+  returning?: string[]
+}): Promise<R> => {
+  if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
+  if (!dbClient) throw new Error('DB client is required')
+  if (!data) throw new Error('Data object is required')
+  if (!conflictFields || conflictFields.length === 0)
+    throw new Error('conflictFields is required and cannot be empty')
+  conflictFields.forEach((field) =>
+    assertValidIdentifier(field, 'conflict field')
+  )
+
+  const rawKeys = Object.keys(data)
+  rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+  assertNoAutoManagedColumns(rawKeys, 'upsert')
+  const rawKeySet = new Set(rawKeys)
+
+  const fieldsToUpdate =
+    updateFields && updateFields.length > 0 ? updateFields : rawKeys
+  fieldsToUpdate.forEach((key) => assertValidIdentifier(key, 'column name'))
+
+  // 'updated_at' is always refreshed on conflict regardless of `data`
+  // (the function injects it below), so naming it in `updateFields` is
+  // valid even though it's never a key of `data`.
+  const unknownUpdateFields = fieldsToUpdate.filter(
+    (key) => key !== 'updated_at' && !rawKeySet.has(key)
+  )
+  if (unknownUpdateFields.length > 0) {
+    throw new Error(
+      `upsert: updateFields references column(s) not present in data: [${unknownUpdateFields.join(', ')}]. Only columns included in data can be refreshed on conflict — a column left out of data would resolve to its table default instead of the intended value.`
+    )
+  }
+
+  if (dbClient.clientType === 'mysql') {
+    const record = data as Record<string, any>
+    const missingConflictValues = conflictFields.filter(
+      (field) => record[field] === undefined
+    )
+    if (missingConflictValues.length > 0) {
+      throw new Error(
+        `upsert: conflictFields references column(s) not present in data: [${missingConflictValues.join(', ')}]. mysql has no RETURNING, so upsert() re-selects the row by these columns after the write — they must be included in data.`
+      )
+    }
+  }
+
+  const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
+  const values = Object.values(data)
+
+  keys.unshift(quoteIdentifier('id', dbClient.clientType))
+  const generatedUUID: string = uuid()
+  values.unshift(generatedUUID)
+
+  keys.push(quoteIdentifier('updated_at', dbClient.clientType))
+  values.push(new Date())
+
+  const placeholders = generatePlaceholders(keys, dbClient.clientType)
+  let query = `INSERT INTO ${tableName} (${keys.join(
+    ', '
+  )}) VALUES (${placeholders})`
+
+  if (dbClient.clientType === 'pg') {
+    const conflictTarget = conflictFields
+      .map((field) => quoteIdentifier(field, 'pg'))
+      .join(', ')
+    const updateSet = Array.from(new Set([...fieldsToUpdate, 'updated_at']))
+      .map((key) => {
+        const quoted = quoteIdentifier(key, 'pg')
+        return `${quoted} = EXCLUDED.${quoted}`
+      })
+      .join(', ')
+
+    query += ` ON CONFLICT (${conflictTarget}) DO UPDATE SET ${updateSet}`
+
+    if (returning && returning.length > 0) {
+      query += ` RETURNING ${createSelectFields(
+        returning,
+        dbClient.clientType
+      )}`
+    }
+
+    const result = await dbClient.query<R[]>(query, values)
+    return result[0]
+  }
+
+  const updateSet = Array.from(new Set([...fieldsToUpdate, 'updated_at']))
+    .map((key) => {
+      const quoted = quoteIdentifier(key, 'mysql')
+      return `${quoted} = VALUES(${quoted})`
+    })
+    .join(', ')
+
+  query += ` ON DUPLICATE KEY UPDATE ${updateSet}`
+
+  await dbClient.query(query, values)
+
+  const record = data as Record<string, any>
+  const whereClause = conflictFields
+    .map((field) => `${quoteIdentifier(field, 'mysql')} = ?`)
+    .join(' AND ')
+  const conflictValues = conflictFields.map((field) => record[field])
+
+  const rows = await dbClient.query<R[]>(
+    `SELECT ${
+      returning && returning.length > 0
+        ? createSelectFields(returning, dbClient.clientType)
+        : '*'
+    } FROM ${tableName}
+      WHERE ${whereClause}
+    `,
+    conflictValues
+  )
+
+  return rows[0]
+}
+
+/**
  * Updates a record in the specified table
  *
  * This function updates a record in the specified table based on the provided
@@ -365,15 +674,26 @@ export const update = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P; returning?: string[] }): Promise<R | void> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
-  if (!id) throw new Error('ID is required')
+  if (!id)
+    throw new Error(`ID is required for update() on table "${tableName}"`)
   if (!data) throw new Error('Data object is required')
+  if (Object.keys(data).length === 0)
+    throw new Error('Data object must have at least one field to update')
 
   const keys = Object.keys(data)
+  keys.forEach((key) => assertValidIdentifier(key, 'column name'))
   const values: any[] = Object.values(data)
 
-  const setClause = generateSetClause(keys, dbClient.clientType)
-  let query = `UPDATE ${tableName} SET ${setClause} WHERE id = '${id}'`
+  const quotedKeys = keys.map((key) =>
+    quoteIdentifier(key, dbClient.clientType)
+  )
+  const setClause = generateSetClause(quotedKeys, dbClient.clientType)
+  const idPlaceholder =
+    dbClient.clientType === 'pg' ? `$${values.length + 1}` : '?'
+  let query = `UPDATE ${tableName} SET ${setClause} WHERE id = ${idPlaceholder}`
+  values.push(id)
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
@@ -423,7 +743,7 @@ export const update = async <P, R>({
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   data: { name: 'John Doe', email: 'john.doe@example.com' },
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   returning: ['id', 'name', 'email'],
  * })
  */
@@ -435,19 +755,22 @@ export const updateMany = async <P, R>({
   returning,
 }: QueryParams<R> & { data: P; returning?: string[] }): Promise<R[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
+  if (Object.keys(data).length === 0)
+    throw new Error('Data object must have at least one field to update')
   if (!where) throw new Error('Where condition is required')
 
   const keys = Object.keys(data)
+  keys.forEach((key) => assertValidIdentifier(key, 'column name'))
   const values: any[] = Object.values(data)
 
   // Generate SET clause with correct placeholders
-  const setClause = keys
-    .map((key, index) =>
-      dbClient.clientType === 'pg' ? `${key} = $${index + 1}` : `${key} = ?`
-    )
-    .join(', ')
+  const quotedKeys = keys.map((key) =>
+    quoteIdentifier(key, dbClient.clientType)
+  )
+  const setClause = generateSetClause(quotedKeys, dbClient.clientType)
 
   // Generate WHERE clause with placeholders starting after SET values
   const [whereClause, whereParams] = createWhereClause(
@@ -456,7 +779,13 @@ export const updateMany = async <P, R>({
     dbClient.clientType
   )
 
-  let query = `UPDATE ${tableName} SET ${setClause} ${whereClause}`
+  if (!whereClause) {
+    throw new Error(
+      'updateMany: where condition produced an empty WHERE clause — refusing to update every row in the table. Pass at least one condition.'
+    )
+  }
+
+  let query = `UPDATE ${tableName} SET ${setClause}${whereClause}`
 
   if (dbClient.clientType === 'pg') {
     if (returning && returning.length > 0) {
@@ -515,8 +844,10 @@ export const deleteOne = async <T>({
   permanently = false,
 }: QueryParams<T> & { permanently?: boolean }): Promise<void> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
-  if (!id) throw new Error('ID is required')
+  if (!id)
+    throw new Error(`ID is required for deleteOne() on table "${tableName}"`)
 
   await dbClient.query(
     permanently
@@ -566,10 +897,13 @@ export const deleteMany = async <T>({
   permanently?: boolean
 }): Promise<void> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!ids || ids.length === 0)
     throw new Error('IDs are required and cannot be empty')
   if (!field) throw new Error('Field is required')
+  assertValidIdentifier(field, 'field')
+  assertWithinBindParamLimit(ids.length, 'deleteMany')
 
   const placeholders =
     dbClient.clientType === 'pg'
@@ -604,7 +938,7 @@ export const deleteMany = async <T>({
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
  *   joins: [{ type: 'INNER', table: 'orders', on: 'users.id = orders.user_id' }],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  *   limit: 10,
@@ -625,7 +959,20 @@ export const joins = async <T>({
   unaccent,
 }: QueryParams<T>): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
+  assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
+
+  if (joins) {
+    joins.forEach((join) => {
+      if (!JOIN_TYPES.has(join.type)) {
+        throw new Error(
+          `Invalid join type: "${join.type}". Only INNER, LEFT, RIGHT or FULL are allowed.`
+        )
+      }
+      assertValidIdentifier(join.table, 'join table')
+      assertSafeSqlFragment(join.on, 'join on condition')
+    })
+  }
 
   const fields = Array.isArray(select) ? select : []
   const selectFields = createSelectFields(fields, dbClient.clientType)
@@ -725,7 +1072,7 @@ export const rawQuery = async <T = any>({
  *   select: ['id', 'name', 'email'],
  *   from: 'users',
  *   joins: [{ type: 'INNER', table: 'orders', on: 'users.id = orders.user_id' }],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  *   limit: 10,
@@ -814,7 +1161,7 @@ async function buildQuery(params: QueryBuilder): Promise<string> {
  * }
  */
 export const withTransaction = async <T>(
-  dbClient: any,
+  dbClient: IDatabaseClient,
   transactionFn: (tx: ITransactionClient) => Promise<T>
 ): Promise<T> => {
   const transaction = await dbClient.beginTransaction()
@@ -859,7 +1206,7 @@ export const withTransaction = async <T>(
  * }
  */
 export const beginTransaction = async (
-  dbClient: any
+  dbClient: IDatabaseClient
 ): Promise<ITransactionClient> => {
   return dbClient.beginTransaction()
 }

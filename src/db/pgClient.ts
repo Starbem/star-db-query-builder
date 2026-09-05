@@ -60,10 +60,6 @@ async function ensureUnaccentExtension(pool: Pool): Promise<void> {
         extension: 'unaccent',
         status: 'installed',
       })
-
-      console.info(
-        '@starbemtech/star-db-query-builder: Extensão unaccent instalada com sucesso.'
-      )
     }
   } catch (error) {
     monitor.emit(MonitorEvents.QUERY_ERROR, {
@@ -151,11 +147,6 @@ export const createPgClient = async (
           })
 
           if (isTransientError(error)) {
-            console.warn(
-              `Postgres query attempt ${attempt} failed, retrying...`,
-              error
-            )
-
             monitor.emit(MonitorEvents.RETRY_ATTEMPT, {
               clientType: 'pg',
               sql,

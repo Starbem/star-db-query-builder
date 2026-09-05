@@ -252,12 +252,11 @@ const userStats = await joins({
     'users.created_at': { operator: '>=', value: new Date('2023-01-01') },
   },
   groupBy: ['users.id', 'users.name'],
-  having: {
-    'COUNT(orders.id)': { operator: '>', value: 0 },
-  },
   orderBy: [{ field: 'total_spent', direction: 'DESC' }],
 })
 ```
+
+> `joins()` has no `having` parameter — it does not exist in the current API. Filter on the aggregate at the application layer, or use [`rawQuery`](./rawQuery.md) if you need a real `HAVING` clause.
 
 ### Pagination with JOINs
 
@@ -639,9 +638,6 @@ const getProductAnalytics = async () => {
       },
     ],
     groupBy: ['products.id', 'products.name', 'categories.name'],
-    having: {
-      'COUNT(order_items.id)': { operator: '>', value: 0 },
-    },
     orderBy: [{ field: 'total_revenue', direction: 'DESC' }],
   })
 }

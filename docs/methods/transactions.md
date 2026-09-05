@@ -116,13 +116,22 @@ const processOrder = async (orderData: any, orderItems: any[]) => {
 
       totalAmount += item.price * item.quantity
 
-      // Update product stock
+      // update() sets columns to the literal value passed in `data` — it does
+      // not interpret an { operator, value } shape as an arithmetic update.
+      // Read the current stock first, then write the computed result.
+      const product = await findFirst({
+        tableName: 'products',
+        dbClient: tx,
+        select: ['stock'],
+        where: { id: { operator: '=', value: item.product_id } },
+      })
+
       await update({
         tableName: 'products',
         dbClient: tx,
         id: item.product_id,
         data: {
-          stock: { operator: '-', value: item.quantity },
+          stock: product.stock - item.quantity,
         },
       })
     }
@@ -163,23 +172,29 @@ const transferMoney = async (
       throw new Error('Insufficient funds')
     }
 
-    // Debit from sender
+    const toAccount = await findFirst({
+      tableName: 'accounts',
+      dbClient: tx,
+      where: { id: { operator: '=', value: toAccountId } },
+    })
+
+    // update() sets columns to the literal value passed in `data` — compute
+    // the new balance yourself, it does not support arithmetic operators
     await update({
       tableName: 'accounts',
       dbClient: tx,
       id: fromAccountId,
       data: {
-        balance: { operator: '-', value: amount },
+        balance: fromAccount.balance - amount,
       },
     })
 
-    // Credit to receiver
     await update({
       tableName: 'accounts',
       dbClient: tx,
       id: toAccountId,
       data: {
-        balance: { operator: '+', value: amount },
+        balance: toAccount.balance + amount,
       },
     })
 

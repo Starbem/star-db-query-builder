@@ -11,8 +11,10 @@ A powerful and flexible database query builder library for Node.js applications,
 - [Query Methods](#query-methods)
   - [findFirst](#findfirst)
   - [findMany](#findmany)
+  - [findManyCursor](#findmanycursor)
   - [insert](#insert)
   - [insertMany](#insertmany)
+  - [upsert](#upsert)
   - [update](#update)
   - [updateMany](#updatemany)
   - [deleteOne](#deleteone)
@@ -29,6 +31,16 @@ A powerful and flexible database query builder library for Node.js applications,
 - [Error Handling](#error-handling)
 - [Contributing](#contributing)
 - [License](#license)
+
+## 📚 Full Documentation
+
+This README covers everything at a glance. For the deep-dive version of each method (parameters, generated SQL for pg/mysql, edge cases, error messages), see [`docs/INDEX.md`](docs/INDEX.md) or jump straight to a method:
+
+- [findFirst](docs/methods/findFirst.md) · [findMany](docs/methods/findMany.md) · [findManyCursor](docs/methods/findManyCursor.md)
+- [insert](docs/methods/insert.md) · [insertMany](docs/methods/insertMany.md) · [upsert](docs/methods/upsert.md)
+- [joins](docs/methods/joins.md) · [rawQuery](docs/methods/rawQuery.md) · [transactions](docs/methods/transactions.md)
+
+`update`, `updateMany`, `deleteOne`, `deleteMany`, `initDb`, `getDbClient` have no dedicated file yet in `docs/methods/` — this README and the JSDoc above each function in `src/core/repository.ts` are the reference for those until one exists.
 
 ## ✨ Features
 
@@ -65,6 +77,16 @@ pnpm add @starbemtech/star-db-query-builder
 # or
 yarn add @starbemtech/star-db-query-builder
 ```
+
+### 🤖 AI agent skill (Claude Code)
+
+If your team uses Claude Code, install the bundled skill so agents get correct usage guidance (method signatures, gotchas like the `update()` operator shape, `upsert()` mysql constraint requirement, etc.) instead of guessing:
+
+```bash
+npx star-db-query-builder-install-skill
+```
+
+Run it from your repo's root, after installing this package. It copies the skill into `.claude/skills/star-db-query-builder/SKILL.md` in your repo — commit that file so the rest of the team gets it too. Safe to re-run after upgrading the package; it re-syncs from whatever version is currently installed.
 
 ## Quick Start
 
@@ -118,9 +140,12 @@ await initDb({
   type: 'pg' | 'mysql',            // Database type
   options: PoolConfig | MySqlPoolOptions, // Connection options
   retryOptions?: RetryOptions,      // Optional retry configuration
-  installUnaccentExtension?: boolean // PostgreSQL unaccent extension
+  installUnaccentExtension?: boolean, // PostgreSQL unaccent extension
+  queryTimeout?: number             // Optional query timeout in ms (see below)
 })
 ```
+
+`queryTimeout` is applied to every query run through this client. For PostgreSQL it maps onto the pool's `query_timeout` (an explicit `query_timeout` already set in `options` takes precedence over it). For MySQL, since `mysql2` has no pool-wide query timeout, it is passed as the `timeout` option on every individual query.
 
 #### PostgreSQL Example
 
@@ -187,9 +212,49 @@ const defaultClient = getDbClient()
 const analyticsClient = getDbClient('analytics')
 ```
 
+### getAllDbClients
+
+Retrieves every registered database client, keyed by the name it was registered under (including `'default'`).
+
+```typescript
+const clients = getAllDbClients() // Record<string, IDatabaseClient>
+const names = Object.keys(clients) // ['default', 'analytics', ...]
+```
+
+### closeDb
+
+Closes a database client's connection pool and removes it from the registry. Use this to release connections gracefully on application shutdown or between tests — `initDb` does not release the pools it creates on its own.
+
+```typescript
+await closeDb() // closes the default client
+await closeDb('analytics') // closes a named client
+```
+
+Throws if the named client is not initialized.
+
+### closeAllDbClients
+
+Closes every registered database client's connection pool.
+
+```typescript
+await closeAllDbClients()
+```
+
+### resetDbClients
+
+Clears the in-memory client/pool registry **without** closing any connection — a synchronous escape hatch for test suites and hot-reload tooling that need a clean registry between runs (e.g. calling `initDb` again with the same name without first awaiting a real `closeDb`). Any real, non-mocked pool left registered is orphaned, not released. Production code that wants to release connections should use `closeDb`/`closeAllDbClients` instead.
+
+```typescript
+afterEach(() => {
+  resetDbClients() // test isolation only — pools here are mocked
+})
+```
+
 ## Query Methods
 
 ### findFirst
+
+📖 [Full docs](docs/methods/findFirst.md)
 
 Finds the first record that matches the specified conditions.
 
@@ -247,6 +312,8 @@ const latestUser = await findFirst({
 ```
 
 ### findMany
+
+📖 [Full docs](docs/methods/findMany.md)
 
 Finds multiple records that match the specified conditions.
 
@@ -310,7 +377,55 @@ const userStats = await findMany({
 })
 ```
 
+### findManyCursor
+
+📖 [Full docs](docs/methods/findManyCursor.md)
+
+Finds multiple records using keyset (cursor) pagination instead of offset/limit — cost stays flat regardless of page depth, and pages don't skip/repeat rows when data changes between calls.
+
+```typescript
+const page = await findManyCursor<T>({
+  tableName: string,
+  dbClient: IDatabaseClient,
+  select?: string[],
+  where?: Conditions<T>,
+  cursorField?: string,      // default: 'id'
+  cursor?: string | number,  // omit for the first page
+  direction?: 'ASC' | 'DESC',// default: 'ASC'
+  limit?: number,            // default: 20
+  unaccent?: boolean
+}): Promise<{ data: T[]; nextCursor: string | number | null }>
+```
+
+#### Examples
+
+```typescript
+// First page
+const page1 = await findManyCursor({
+  tableName: 'users',
+  dbClient,
+  where: { status: { operator: '=', value: 'active' } },
+  cursorField: 'created_at',
+  limit: 20,
+})
+
+// Next page
+const page2 = await findManyCursor({
+  tableName: 'users',
+  dbClient,
+  cursorField: 'created_at',
+  cursor: page1.nextCursor,
+  limit: 20,
+})
+
+// page.nextCursor is null once there are no more rows past this page
+```
+
+`findManyCursor` is a separate function, not an option on `findMany` — its return shape (`{ data, nextCursor }`) differs from `findMany`'s plain `T[]`.
+
 ### insert
+
+📖 [Full docs](docs/methods/insert.md)
 
 Inserts a single record into the database.
 
@@ -377,6 +492,8 @@ const user: User = await insert<UserData, User>({
 
 ### insertMany
 
+📖 [Full docs](docs/methods/insertMany.md)
+
 Inserts multiple records into the database in a single operation.
 
 ```typescript
@@ -413,6 +530,47 @@ const users = await insertMany({
   returning: ['id', 'name', 'email'],
 })
 ```
+
+### upsert
+
+📖 [Full docs](docs/methods/upsert.md)
+
+Inserts a record, or updates it in place when it collides with an existing unique/primary key constraint. `conflictFields` must name columns already covered by a **real unique or primary key constraint** on `tableName` — `upsert` does not create or verify that constraint, it only builds SQL that assumes it exists.
+
+```typescript
+const result = await upsert<P, R>({
+  tableName: string,
+  dbClient: IDatabaseClient,
+  data: P,
+  conflictFields: string[],   // must match a real unique/PK constraint
+  updateFields?: string[],    // default: every field in `data`
+  returning?: string[]
+})
+```
+
+#### Examples
+
+```typescript
+// Insert a user, or update name/age if the email already exists
+// (requires: CREATE UNIQUE INDEX idx_users_email ON users(email);)
+const user = await upsert({
+  tableName: 'users',
+  dbClient,
+  data: { email: 'john@example.com', name: 'John Doe', age: 30 },
+  conflictFields: ['email'],
+})
+
+// Only refresh `name` on conflict, leave other fields untouched
+const user = await upsert({
+  tableName: 'users',
+  dbClient,
+  data: { email: 'john@example.com', name: 'John Doe', role: 'admin' },
+  conflictFields: ['email'],
+  updateFields: ['name'],
+})
+```
+
+> On mysql, `conflictFields` is **not** part of the generated SQL — `ON DUPLICATE KEY UPDATE` relies entirely on the table's own constraint to detect the conflict. `conflictFields` there is used only to re-select the row afterwards, since mysql has no `RETURNING`.
 
 ### update
 
@@ -486,12 +644,15 @@ const updatedUsers = await updateMany({
 })
 
 // Update with complex conditions
+// updateMany() sets columns to the literal value passed in `data` — it does
+// not interpret an { operator, value } shape as an arithmetic update. Read
+// the current value first if you need to increment/decrement it.
 const updatedUsers = await updateMany({
   tableName: 'users',
   dbClient,
   data: {
     last_login: new Date(),
-    login_count: { operator: '+', value: 1 },
+    login_count: currentLoginCount + 1,
   },
   where: {
     AND: [
@@ -571,6 +732,8 @@ await deleteMany({
 
 ### joins
 
+📖 [Full docs](docs/methods/joins.md)
+
 Executes queries with JOIN operations.
 
 ```typescript
@@ -637,14 +800,15 @@ const report = await joins({
     },
   ],
   groupBy: ['users.id', 'users.name', 'users.email', 'plans.name'],
-  having: {
-    'COUNT(orders.id)': { operator: '>', value: 0 },
-  },
   orderBy: [{ field: 'total_spent', direction: 'DESC' }],
 })
 ```
 
+> `joins()` has no `having` parameter. Filter on the aggregate at the application layer, or use `rawQuery` if you need a real `HAVING` clause.
+
 ### rawQuery
+
+📖 [Full docs](docs/methods/rawQuery.md)
 
 Executes raw SQL queries directly on the database.
 
@@ -689,6 +853,8 @@ const stats = await rawQuery({
 
 ## Transactions
 
+📖 [Full docs](docs/methods/transactions.md)
+
 Execute multiple database operations within a single transaction to ensure data consistency and atomicity.
 
 ### withTransaction
@@ -709,6 +875,7 @@ import {
   withTransaction,
   insert,
   update,
+  findFirst,
 } from '@starbemtech/star-db-query-builder'
 
 // Create user with profile in a single transaction
@@ -764,13 +931,22 @@ const processOrder = async (orderData: any, orderItems: any[]) => {
 
       totalAmount += item.price * item.quantity
 
-      // Update product stock
+      // update() sets columns to the literal value passed in `data` — it
+      // does not interpret { operator, value } as an arithmetic update.
+      // Read the current stock first, then write the computed result.
+      const product = await findFirst({
+        tableName: 'products',
+        dbClient: tx,
+        select: ['stock'],
+        where: { id: { operator: '=', value: item.product_id } },
+      })
+
       await update({
         tableName: 'products',
         dbClient: tx,
         id: item.product_id,
         data: {
-          stock: { operator: '-', value: item.quantity },
+          stock: product.stock - item.quantity,
         },
       })
     }
@@ -862,6 +1038,8 @@ interface ITransactionClient {
 
 Used for building WHERE clauses with type safety.
 
+> `IN`/`NOT IN`/`BETWEEN` accept at most **10,000** values in `value`. A larger array throws a descriptive error instead of building an oversized query — chunk the list (e.g. multiple `IN` queries, or `= ANY($1::type[])` on pg) instead of forwarding an unbounded list (e.g. raw search results) as a single condition. `BETWEEN` additionally requires exactly 2 values. Every condition must use the `{ operator, value }` shape — a plain value (e.g. `{ status: 'active' }`) throws instead of being silently dropped from the WHERE clause.
+
 ```typescript
 type Conditions<T> = {
   [P in keyof T]?: Condition<T[P]>
@@ -892,7 +1070,10 @@ interface OperatorCondition {
 interface LogicalCondition<T> {
   OR?: Conditions<T>[]
   AND?: Conditions<T>[]
-  JOINS?: Conditions<object>
+  // Nested AND-group rendered as its own parenthesized clause, e.g.
+  // `(a = $1 AND b = $2)`. Despite the name this has nothing to do with SQL
+  // JOINs — see the `joins()` query function for that.
+  JOINS?: Conditions<object>[]
   notExists?: OperatorCondition
 }
 ```
@@ -937,19 +1118,6 @@ const users = await findMany({
       { created_at: { operator: '>=', value: new Date('2023-01-01') } },
     ],
   },
-})
-```
-
-### Using Unaccent for PostgreSQL
-
-```typescript
-const users = await findMany({
-  tableName: 'users',
-  dbClient,
-  where: {
-    name: { operator: 'ILIKE', value: '%joão%' },
-  },
-  unaccent: true, // Enables unaccent search
 })
 ```
 
@@ -1358,78 +1526,11 @@ Always wrap database operations in try-catch blocks and handle errors appropriat
 
 ## Contributing
 
-We welcome contributions to the Star DB Query Builder! Here's how you can help:
+See **[CONTRIBUTING.md](./CONTRIBUTING.md)** for the development setup, branch/commit conventions, the required local gate before opening a PR, and the documentation-update rule. Full agent/contributor reference: **[AGENTS.md](./AGENTS.md)**.
 
-### Development Setup
-
-1. **Clone the repository**
-
-   ```bash
-   git clone https://github.com/starbem/star-db-query-builder.git
-   cd star-db-query-builder
-   ```
-
-2. **Install dependencies**
-
-   ```bash
-   pnpm install
-   ```
-
-3. **Run tests**
-
-   ```bash
-   pnpm test
-   ```
-
-4. **Run linting**
-
-   ```bash
-   pnpm lint
-   ```
-
-5. **Build the project**
-   ```bash
-   pnpm build
-   ```
-
-### Contributing Guidelines
-
-- **Code Style**: Follow the existing code style and use Prettier for formatting
-- **TypeScript**: Maintain strict TypeScript typing
-- **Tests**: Add tests for new features and bug fixes
-- **Documentation**: Update documentation for any API changes
-- **Commit Messages**: Use conventional commit messages
-
-### Pull Request Process
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Add tests for your changes
-5. Ensure all tests pass (`pnpm test`)
-6. Run linting (`pnpm lint`)
-7. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-8. Push to your branch (`git push origin feature/amazing-feature`)
-9. Open a Pull Request
-
-### Reporting Issues
-
-When reporting issues, please include:
-
-- **Environment**: Node.js version, database type and version
-- **Steps to Reproduce**: Clear steps to reproduce the issue
-- **Expected Behavior**: What you expected to happen
-- **Actual Behavior**: What actually happened
-- **Code Sample**: Minimal code sample that demonstrates the issue
-
-### Feature Requests
-
-For feature requests, please:
-
-- **Describe the feature**: Clear description of what you want
-- **Use Case**: Explain why this feature would be useful
-- **Proposed API**: If you have ideas for the API design
-- **Alternatives**: Any alternative solutions you've considered
+- Found a bug or want a new feature? Use the [issue templates](.github/ISSUE_TEMPLATE/).
+- Found a security vulnerability? See **[SECURITY.md](./SECURITY.md)** — do not open a public issue.
+- This project follows the **[Code of Conduct](./CODE_OF_CONDUCT.md)**.
 
 ## License
 
@@ -1437,9 +1538,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-- **Documentation**: [GitHub Wiki](https://github.com/starbem/star-db-query-builder/wiki)
+- **Documentation**: [docs/INDEX.md](docs/INDEX.md)
 - **Issues**: [GitHub Issues](https://github.com/starbem/star-db-query-builder/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/starbem/star-db-query-builder/discussions)
 
 ## Changelog
 
