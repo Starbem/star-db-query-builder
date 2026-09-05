@@ -1526,78 +1526,11 @@ Always wrap database operations in try-catch blocks and handle errors appropriat
 
 ## Contributing
 
-We welcome contributions to the Star DB Query Builder! Here's how you can help:
+See **[CONTRIBUTING.md](./CONTRIBUTING.md)** for the development setup, branch/commit conventions, the required local gate before opening a PR, and the documentation-update rule. Full agent/contributor reference: **[AGENTS.md](./AGENTS.md)**.
 
-### Development Setup
-
-1. **Clone the repository**
-
-   ```bash
-   git clone https://github.com/starbem/star-db-query-builder.git
-   cd star-db-query-builder
-   ```
-
-2. **Install dependencies**
-
-   ```bash
-   pnpm install
-   ```
-
-3. **Run tests**
-
-   ```bash
-   pnpm test
-   ```
-
-4. **Run linting**
-
-   ```bash
-   pnpm lint
-   ```
-
-5. **Build the project**
-   ```bash
-   pnpm build
-   ```
-
-### Contributing Guidelines
-
-- **Code Style**: Follow the existing code style and use Prettier for formatting
-- **TypeScript**: Maintain strict TypeScript typing
-- **Tests**: Add tests for new features and bug fixes
-- **Documentation**: Update documentation for any API changes
-- **Commit Messages**: Use conventional commit messages
-
-### Pull Request Process
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Add tests for your changes
-5. Ensure all tests pass (`pnpm test`)
-6. Run linting (`pnpm lint`)
-7. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-8. Push to your branch (`git push origin feature/amazing-feature`)
-9. Open a Pull Request
-
-### Reporting Issues
-
-When reporting issues, please include:
-
-- **Environment**: Node.js version, database type and version
-- **Steps to Reproduce**: Clear steps to reproduce the issue
-- **Expected Behavior**: What you expected to happen
-- **Actual Behavior**: What actually happened
-- **Code Sample**: Minimal code sample that demonstrates the issue
-
-### Feature Requests
-
-For feature requests, please:
-
-- **Describe the feature**: Clear description of what you want
-- **Use Case**: Explain why this feature would be useful
-- **Proposed API**: If you have ideas for the API design
-- **Alternatives**: Any alternative solutions you've considered
+- Found a bug or want a new feature? Use the [issue templates](.github/ISSUE_TEMPLATE/).
+- Found a security vulnerability? See **[SECURITY.md](./SECURITY.md)** — do not open a public issue.
+- This project follows the **[Code of Conduct](./CODE_OF_CONDUCT.md)**.
 
 ## License
 
@@ -1605,9 +1538,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-- **Documentation**: [GitHub Wiki](https://github.com/starbem/star-db-query-builder/wiki)
+- **Documentation**: [docs/INDEX.md](docs/INDEX.md)
 - **Issues**: [GitHub Issues](https://github.com/starbem/star-db-query-builder/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/starbem/star-db-query-builder/discussions)
 
 ## Changelog
 
