@@ -22,6 +22,22 @@ const DANGEROUS_SQL_PATTERN = /(;|--|\/\*|\*\/|`)/
  * that compile-time union, since `key`/`operator` reach this function as
  * plain strings regardless of what TypeScript enforced at the call site.
  */
+/**
+ * Maximum number of values accepted in a single `IN`/`NOT IN`/`BETWEEN`
+ * condition array.
+ *
+ * This guards two real failure modes, both triggered by callers building a
+ * WHERE condition from an unbounded list (e.g. forwarding a large search
+ * result as an `IN` filter): pg's own wire protocol rejects a query with more
+ * than 65535 total bound parameters, and — well before that limit — building
+ * the values array with `values.push(...value)` throws
+ * `RangeError: Maximum call stack size exceeded` once `value.length` is large
+ * enough to overflow the JS engine's function-call argument limit. Chunk the
+ * list (e.g. multiple `IN` queries unioned, or a temp table / `= ANY($1::type[])`
+ * for pg) instead of growing a single condition past this size.
+ */
+const MAX_IN_LIST_SIZE = 10_000
+
 const WHERE_OPERATOR_WHITELIST = new Set([
   'ILIKE',
   'LIKE',
@@ -296,6 +312,12 @@ export const createWhereClause = <T>(
         } else if (operator.includes('NULL')) {
           whereParts.push(`${key} ${operator}`)
         } else if (Array.isArray(value)) {
+          if (value.length > MAX_IN_LIST_SIZE) {
+            throw new Error(
+              `Where condition on "${key}" has ${value.length} values for operator "${operator}", exceeding the maximum of ${MAX_IN_LIST_SIZE}. Chunk the query instead of growing a single condition this large.`
+            )
+          }
+
           const placeholders = value
             .map(() =>
               clientType === 'pg'
@@ -313,7 +335,13 @@ export const createWhereClause = <T>(
           } else {
             whereParts.push(`${key} ${operator} (${placeholders})`)
           }
-          values.push(...value)
+          // Not `values.push(...value)`: spreading a large array into a
+          // function call can itself throw `RangeError: Maximum call stack
+          // size exceeded` (V8's function-call argument limit), independent
+          // of the MAX_IN_LIST_SIZE guard above catching merely-large lists.
+          for (const item of value) {
+            values.push(item)
+          }
         } else {
           if (unaccent && clientType === 'pg') {
             if (operator.toUpperCase() === 'ILIKE') {

@@ -11,6 +11,10 @@ Entries below are generated from the real commit history for each tagged release
 
 ## [1.4.0] - 2026-09-04
 
+- `fix`: `createWhereClause` no longer throws `RangeError: Maximum call stack size exceeded` on a large `IN`/`NOT IN`/`BETWEEN` condition — `values.push(...value)` (spreading the array into a function call) replaced with a plain loop. Fixes #21 (item 1) / #22.
+- `fix`: `IN`/`NOT IN`/`BETWEEN` condition arrays are now capped at 10,000 values with a descriptive error, instead of silently building a query with tens of thousands of bind parameters. Fixes #21 (item 2).
+- `fix`: `update()`/`deleteOne()` now include the table name in the `ID is required` error instead of a bare generic message. Fixes #21 (item 3).
+
 - `fix`: `findFirst` now adds `LIMIT 1` to the generated query instead of fetching every matching row and taking the first in JS.
 - `fix`: `update()` no longer concatenates `id` directly into the SQL string — parameterized for both pg and mysql (was a real SQL injection vector).
 - `fix`: `update()`/`updateMany()` now validate and quote every column name in `data` (`assertValidIdentifier` + `quoteIdentifier`), matching `insert`/`upsert`. Previously these column names were interpolated into the SQL string unvalidated.

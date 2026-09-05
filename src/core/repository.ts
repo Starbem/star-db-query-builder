@@ -666,7 +666,8 @@ export const update = async <P, R>({
   if (!tableName) throw new Error('Table name is required')
   assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
-  if (!id) throw new Error('ID is required')
+  if (!id)
+    throw new Error(`ID is required for update() on table "${tableName}"`)
   if (!data) throw new Error('Data object is required')
   if (Object.keys(data).length === 0)
     throw new Error('Data object must have at least one field to update')
@@ -829,7 +830,8 @@ export const deleteOne = async <T>({
   if (!tableName) throw new Error('Table name is required')
   assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
-  if (!id) throw new Error('ID is required')
+  if (!id)
+    throw new Error(`ID is required for deleteOne() on table "${tableName}"`)
 
   await dbClient.query(
     permanently

@@ -470,11 +470,11 @@ describe('repository', () => {
   })
 
   describe('update', () => {
-    it('throws when id is missing', async () => {
+    it('throws with the table name in context when id is missing', async () => {
       const dbClient = createMockDbClient()
       await expect(
         update({ tableName: 'users', dbClient, id: '', data: { name: 'x' } })
-      ).rejects.toThrow('ID is required')
+      ).rejects.toThrow('ID is required for update() on table "users"')
     })
 
     it('throws when data has no fields to update', async () => {
@@ -770,6 +770,13 @@ describe('repository', () => {
   })
 
   describe('deleteOne', () => {
+    it('throws with the table name in context when id is missing', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        deleteOne({ tableName: 'users', dbClient, id: '' })
+      ).rejects.toThrow('ID is required for deleteOne() on table "users"')
+    })
+
     it('soft deletes by default', async () => {
       const dbClient = createMockDbClient('pg')
       dbClient.query.mockResolvedValue(undefined as any)

@@ -308,6 +308,28 @@ describe('utils', () => {
       ).toThrow('Invalid where operator')
     })
 
+    it('rejects an IN list larger than the documented maximum instead of building an oversized query', () => {
+      const hugeList = Array.from({ length: 10_001 }, (_, i) => i)
+      expect(() =>
+        createWhereClause(
+          { id: { operator: 'IN', value: hugeList } } as any,
+          1,
+          'pg'
+        )
+      ).toThrow(/exceeding the maximum of 10000/)
+    })
+
+    it('handles a large IN list (under the maximum) without throwing a RangeError from spreading into push', () => {
+      const largeList = Array.from({ length: 8_000 }, (_, i) => i)
+      const [clause, values] = createWhereClause(
+        { id: { operator: 'IN', value: largeList } } as any,
+        1,
+        'pg'
+      )
+      expect(values).toHaveLength(8_000)
+      expect(clause.startsWith(' WHERE id IN (')).toBe(true)
+    })
+
     it('rejects a NOT EXISTS subquery containing statement terminators', () => {
       expect(() =>
         createWhereClause(
