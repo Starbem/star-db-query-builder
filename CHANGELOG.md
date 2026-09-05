@@ -18,6 +18,10 @@ Entries below are generated from the real commit history for each tagged release
 - `fix`: a `where` condition using a plain value (e.g. `{ status: 'active' }` instead of `{ status: { operator: '=', value: 'active' } }`) now throws instead of being silently dropped from the generated WHERE clause — the silent-drop behavior meant `updateMany`/`deleteMany` calls that intended to scope a write could end up running against every row in the table. `updateMany` additionally refuses to run if `where` produces an empty WHERE clause.
 - `fix`: an `operator` passed in lowercase or mixed case (e.g. `'ilike'`, supported pre-1.4.0 since operators used to be interpolated as-is) is now normalized before the whitelist check instead of being rejected — a regression introduced by the P0/#21 sanitization work in this same release.
 - `fix`: `BETWEEN` now rejects a `value` array that isn't exactly 2 items, and `NOT EXISTS` now rejects a non-string `value`, instead of building malformed SQL.
+- `fix`: `insert`/`insertMany`/`upsert` now reject `data` containing `id` or `updated_at` instead of silently duplicating them in the generated column list (previously produced e.g. `INSERT INTO t ("id", "id", ...)`, a database error with no clear cause).
+- `fix`: `upsert`'s `updateFields` now accepts `updated_at` — the function always refreshes it itself regardless of `data`, so rejecting it as "not present in data" (introduced in the prior sanitization pass) was an inconsistent contract.
+- `fix`: `deleteMany`/`insertMany` now validate the total bind-parameter count against the same 65535 driver limit `createWhereClause`'s `IN`/`BETWEEN` guard already enforced, instead of only guarding one of the code paths that can build an oversized query.
+- `fix`: `createWhereClause` no longer silently drops the `AND` group when `OR` is also present in the same `where` object — both are now rendered.
 
 - `fix`: `findFirst` now adds `LIMIT 1` to the generated query instead of fetching every matching row and taking the first in JS.
 - `fix`: `update()` no longer concatenates `id` directly into the SQL string — parameterized for both pg and mysql (was a real SQL injection vector).

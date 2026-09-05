@@ -248,6 +248,20 @@ describe('utils', () => {
       expect(values).toEqual(['active', 'admin'])
     })
 
+    it('renders both OR and AND groups when they coexist instead of silently dropping one', () => {
+      const [clause, values] = createWhereClause(
+        {
+          a: { operator: '=', value: 1 },
+          OR: [{ b: { operator: '=', value: 2 } }],
+          AND: [{ c: { operator: '=', value: 3 } }],
+        } as any,
+        1,
+        'pg'
+      )
+      expect(clause).toBe(' WHERE a = $1 AND (b = $2) AND (c = $3)')
+      expect(values).toEqual([1, 2, 3])
+    })
+
     it('combines JOINS conditions into their own AND group', () => {
       const [clause, values] = createWhereClause(
         {

@@ -17,6 +17,8 @@ import {
   createOffsetClause,
   assertValidIdentifier,
   assertSafeSqlFragment,
+  assertNoAutoManagedColumns,
+  assertWithinBindParamLimit,
   quoteIdentifier,
 } from './utils'
 
@@ -307,6 +309,7 @@ export const insert = async <P, R>({
 
   const rawKeys = Object.keys(data)
   rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+  assertNoAutoManagedColumns(rawKeys, 'insert')
 
   const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
   const values = Object.values(data)
@@ -391,6 +394,7 @@ export const insertMany = async <P, R>({
   const firstItem = data[0] as Record<string, any>
   const rawKeys = Object.keys(firstItem)
   rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+  assertNoAutoManagedColumns(rawKeys, 'insertMany')
 
   const rawKeySet = new Set(rawKeys)
   data.forEach((item, index) => {
@@ -415,6 +419,8 @@ export const insertMany = async <P, R>({
     ...keys,
     quoteIdentifier('updated_at', dbClient.clientType),
   ]
+
+  assertWithinBindParamLimit(data.length * allKeys.length, 'insertMany')
 
   let query = `INSERT INTO ${tableName} (${allKeys.join(', ')}) VALUES `
 
@@ -535,14 +541,18 @@ export const upsert = async <P, R>({
 
   const rawKeys = Object.keys(data)
   rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+  assertNoAutoManagedColumns(rawKeys, 'upsert')
   const rawKeySet = new Set(rawKeys)
 
   const fieldsToUpdate =
     updateFields && updateFields.length > 0 ? updateFields : rawKeys
   fieldsToUpdate.forEach((key) => assertValidIdentifier(key, 'column name'))
 
+  // 'updated_at' is always refreshed on conflict regardless of `data`
+  // (the function injects it below), so naming it in `updateFields` is
+  // valid even though it's never a key of `data`.
   const unknownUpdateFields = fieldsToUpdate.filter(
-    (key) => !rawKeySet.has(key)
+    (key) => key !== 'updated_at' && !rawKeySet.has(key)
   )
   if (unknownUpdateFields.length > 0) {
     throw new Error(
@@ -893,6 +903,7 @@ export const deleteMany = async <T>({
     throw new Error('IDs are required and cannot be empty')
   if (!field) throw new Error('Field is required')
   assertValidIdentifier(field, 'field')
+  assertWithinBindParamLimit(ids.length, 'deleteMany')
 
   const placeholders =
     dbClient.clientType === 'pg'

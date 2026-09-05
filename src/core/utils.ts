@@ -17,12 +17,6 @@ const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/
 const DANGEROUS_SQL_PATTERN = /(;|--|\/\*|\*\/|`)/
 
 /**
- * Every operator `createWhereClause` knows how to render. Kept in sync with
- * `OperatorCondition['operator']` in `types.ts` — this is the runtime side of
- * that compile-time union, since `key`/`operator` reach this function as
- * plain strings regardless of what TypeScript enforced at the call site.
- */
-/**
  * Maximum number of values accepted in a single `IN`/`NOT IN`/`BETWEEN`
  * condition array.
  *
@@ -36,8 +30,43 @@ const DANGEROUS_SQL_PATTERN = /(;|--|\/\*|\*\/|`)/
  * list (e.g. multiple `IN` queries unioned, or a temp table / `= ANY($1::type[])`
  * for pg) instead of growing a single condition past this size.
  */
-const MAX_IN_LIST_SIZE = 10_000
+export const MAX_IN_LIST_SIZE = 10_000
 
+/**
+ * pg's wire protocol rejects a query with more than 65535 total bound
+ * parameters ("bind message has N parameter formats but M parameters" /
+ * "too many parameters"). Any function that can build a bind-parameter list
+ * proportional to caller input (a large `ids` array, a large batch insert)
+ * should check its total against this before building the query, rather
+ * than letting the database reject it with a cryptic protocol error.
+ */
+export const MAX_BIND_PARAMS = 65_535
+
+/**
+ * Rejects a query that would exceed the maximum number of bind parameters
+ * a database driver accepts in a single statement
+ *
+ * @param count - The total number of bind parameters the query would use
+ * @param label - A human-readable label used in the error message
+ * @throws {Error} When `count` exceeds `MAX_BIND_PARAMS`
+ */
+export const assertWithinBindParamLimit = (
+  count: number,
+  label: string
+): void => {
+  if (count > MAX_BIND_PARAMS) {
+    throw new Error(
+      `${label} would use ${count} bind parameters, exceeding the maximum of ${MAX_BIND_PARAMS} supported by the database driver. Chunk the operation into smaller batches.`
+    )
+  }
+}
+
+/**
+ * Every operator `createWhereClause` knows how to render. Kept in sync with
+ * `OperatorCondition['operator']` in `types.ts` — this is the runtime side of
+ * that compile-time union, since `key`/`operator` reach this function as
+ * plain strings regardless of what TypeScript enforced at the call site.
+ */
 const WHERE_OPERATOR_WHITELIST = new Set([
   'ILIKE',
   'LIKE',
@@ -127,6 +156,39 @@ export const quoteIdentifier = (
   identifier: string,
   clientType: DBClients
 ): string => (clientType === 'pg' ? `"${identifier}"` : `\`${identifier}\``)
+
+/**
+ * Columns that `insert`/`insertMany`/`upsert` always add themselves
+ * (a generated `id` and a refreshed `updated_at`) and therefore must not
+ * also appear in the caller-supplied `data`.
+ */
+const AUTO_MANAGED_COLUMNS = new Set(['id', 'updated_at'])
+
+/**
+ * Rejects a caller-supplied column list that includes a column the function
+ * manages itself (`id`, `updated_at`)
+ *
+ * Without this check, a `data` object containing `id` or `updated_at` ended
+ * up duplicated in the generated column list (e.g.
+ * `INSERT INTO t ("id", "id", ...)`), which the database rejects with a
+ * confusing syntax/duplicate-column error instead of a clear one from this
+ * library.
+ *
+ * @param keys - The column names from the caller-supplied `data` object
+ * @param fnName - The name of the calling function, used in the error message
+ * @throws {Error} When `keys` includes `id` or `updated_at`
+ */
+export const assertNoAutoManagedColumns = (
+  keys: string[],
+  fnName: string
+): void => {
+  const found = keys.filter((key) => AUTO_MANAGED_COLUMNS.has(key))
+  if (found.length > 0) {
+    throw new Error(
+      `${fnName}: data must not include [${found.join(', ')}] — ${fnName} manages these columns itself (generates "id", refreshes "updated_at").`
+    )
+  }
+}
 
 /**
  * Converts an array of strings to a comma-separated string with quotes
@@ -425,31 +487,37 @@ export const createWhereClause = <T>(
     }
   }
 
-  if ('OR' in conditions || 'AND' in conditions) {
-    const logicalOperator = conditions.OR ? 'OR' : 'AND'
-    const compositeConditions = conditions.OR || conditions.AND
+  const pushLogicalGroup = (
+    compositeConditions: unknown,
+    logicalOperator: 'OR' | 'AND'
+  ) => {
+    if (!Array.isArray(compositeConditions)) return
 
-    if (Array.isArray(compositeConditions)) {
-      const subWhereParts = compositeConditions
-        .map((subCondition: any) => {
-          if (
-            typeof subCondition === 'object' &&
-            !Array.isArray(subCondition) &&
-            subCondition !== null
-          ) {
-            const key = Object.keys(subCondition)[0]
-            const condition = subCondition[key]
-            processCondition(key, condition) // Certifica que o unaccent é processado aqui também
-            return whereParts.pop()
-          }
+    const subWhereParts = compositeConditions
+      .map((subCondition: any) => {
+        if (
+          typeof subCondition === 'object' &&
+          !Array.isArray(subCondition) &&
+          subCondition !== null
+        ) {
+          const key = Object.keys(subCondition)[0]
+          const condition = subCondition[key]
+          processCondition(key, condition) // Certifica que o unaccent é processado aqui também
+          return whereParts.pop()
+        }
 
-          return ''
-        })
-        .filter((part) => part)
+        return ''
+      })
+      .filter((part) => part)
 
-      whereParts.push(`(${subWhereParts.join(` ${logicalOperator} `)})`)
-    }
+    whereParts.push(`(${subWhereParts.join(` ${logicalOperator} `)})`)
   }
+
+  // Each processed independently — a `where` with both `OR` and `AND` groups
+  // used to only render whichever one `conditions.OR ? 'OR' : 'AND'` picked,
+  // silently dropping the other group from the generated SQL.
+  if ('OR' in conditions) pushLogicalGroup(conditions.OR, 'OR')
+  if ('AND' in conditions) pushLogicalGroup(conditions.AND, 'AND')
 
   const whereClause =
     whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : ''

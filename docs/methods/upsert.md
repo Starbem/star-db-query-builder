@@ -184,7 +184,8 @@ Common error messages you might encounter:
 - `Data object is required` - The `data` parameter is missing
 - `conflictFields is required and cannot be empty` - No conflict target given
 - `Invalid column name "..."` / `Invalid conflict field "..."` - A column name in `data`, `conflictFields`, or `updateFields` failed the identifier whitelist (e.g. contains `;`, spaces, or SQL keywords used unsafely)
-- `upsert: updateFields references column(s) not present in data: [...]` - A field named in `updateFields` isn't a key of `data` — it would resolve to the column's table default instead of a real value, so this is rejected rather than silently applied
+- `upsert: data must not include [id, updated_at]` - `data` named a column `upsert()` manages itself; `id` is generated and `updated_at` is always refreshed on conflict, so including either in `data` would duplicate the column in the generated INSERT
+- `upsert: updateFields references column(s) not present in data: [...]` - A field named in `updateFields` isn't a key of `data` (and isn't `updated_at`, which is always allowed since the function refreshes it itself) — it would resolve to the column's table default instead of a real value, so this is rejected rather than silently applied
 - `upsert: conflictFields references column(s) not present in data: [...]` (mysql only) - A field named in `conflictFields` isn't a key of `data` — mysql has no `RETURNING`, so `upsert()` needs these columns' values to re-select the row afterward
 - `there is no unique or exclusion constraint matching the ON CONFLICT specification` (pg) - `conflictFields` doesn't match an actual constraint
 

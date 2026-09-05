@@ -281,6 +281,18 @@ describe('repository', () => {
       ).rejects.toThrow('Data object is required')
     })
 
+    it('rejects data containing id or updated_at instead of duplicating them in the column list', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        insert({
+          tableName: 'users',
+          dbClient,
+          data: { id: 'caller-supplied', name: 'John' },
+        })
+      ).rejects.toThrow('insert: data must not include [id]')
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
     it('inserts a record for pg and returns the RETURNING row', async () => {
       const dbClient = createMockDbClient('pg')
       dbClient.query.mockResolvedValue([{ id: 'generated-uuid', name: 'John' }])
@@ -372,6 +384,29 @@ describe('repository', () => {
       await expect(
         insertMany({ tableName: 'users', dbClient, data: [] })
       ).rejects.toThrow('Data array is required and cannot be empty')
+    })
+
+    it('rejects data containing id or updated_at instead of duplicating them in the column list', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        insertMany({
+          tableName: 'users',
+          dbClient,
+          data: [{ updated_at: new Date(), name: 'John' }],
+        })
+      ).rejects.toThrow('insertMany: data must not include [updated_at]')
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('rejects a batch that would exceed the bind parameter limit', async () => {
+      const dbClient = createMockDbClient('pg')
+      const data = Array.from({ length: 22_000 }, (_, i) => ({
+        name: `user-${i}`,
+      }))
+      await expect(
+        insertMany({ tableName: 'users', dbClient, data })
+      ).rejects.toThrow(/exceeding the maximum of 65535/)
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
 
     it('inserts multiple records for pg with unique placeholders per row', async () => {
@@ -627,6 +662,34 @@ describe('repository', () => {
   })
 
   describe('upsert', () => {
+    it('rejects data containing id or updated_at instead of duplicating them in the column list', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        upsert({
+          tableName: 'users',
+          dbClient,
+          data: { id: 'caller-supplied', email: 'x@example.com' },
+          conflictFields: ['email'],
+        })
+      ).rejects.toThrow('upsert: data must not include [id]')
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('accepts updateFields containing updated_at even though it is never a key of data', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: 'generated-uuid' }])
+
+      await expect(
+        upsert({
+          tableName: 'users',
+          dbClient,
+          data: { email: 'john@example.com', name: 'John' },
+          conflictFields: ['email'],
+          updateFields: ['name', 'updated_at'],
+        })
+      ).resolves.not.toThrow()
+    })
+
     it('throws when conflictFields is missing', async () => {
       const dbClient = createMockDbClient()
       await expect(
@@ -757,7 +820,7 @@ describe('repository', () => {
       await upsert({
         tableName: 'users',
         dbClient,
-        data: { email: 'john@example.com', updated_at: new Date() },
+        data: { email: 'john@example.com' },
         conflictFields: ['email'],
         updateFields: ['email', 'updated_at'],
       })
@@ -828,6 +891,15 @@ describe('repository', () => {
       await expect(
         deleteMany({ tableName: 'users', dbClient, ids: [] })
       ).rejects.toThrow('IDs are required and cannot be empty')
+    })
+
+    it('rejects an ids list that would exceed the bind parameter limit', async () => {
+      const dbClient = createMockDbClient('pg')
+      const ids = Array.from({ length: 70_000 }, (_, i) => `id-${i}`)
+      await expect(
+        deleteMany({ tableName: 'users', dbClient, ids })
+      ).rejects.toThrow(/exceeding the maximum of 65535/)
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
 
     it('builds IN clause with one placeholder per id', async () => {
