@@ -20,10 +20,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/starbem/star-db-query-builder.git"
+    "url": "git+https://github.com/Starbem/star-db-query-builder.git"
   },
   "bugs": {
-    "url": "https://github.com/starbem/star-db-query-builder/issues"
+    "url": "https://github.com/Starbem/star-db-query-builder/issues"
   },
   "keywords": [
     "javascript",
