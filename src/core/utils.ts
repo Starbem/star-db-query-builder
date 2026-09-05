@@ -17,6 +17,30 @@ const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/
 const DANGEROUS_SQL_PATTERN = /(;|--|\/\*|\*\/|`)/
 
 /**
+ * Every operator `createWhereClause` knows how to render. Kept in sync with
+ * `OperatorCondition['operator']` in `types.ts` — this is the runtime side of
+ * that compile-time union, since `key`/`operator` reach this function as
+ * plain strings regardless of what TypeScript enforced at the call site.
+ */
+const WHERE_OPERATOR_WHITELIST = new Set([
+  'ILIKE',
+  'LIKE',
+  '=',
+  '>',
+  '<',
+  'IN',
+  'BETWEEN',
+  '!=',
+  '<=',
+  '>=',
+  'NOT IN',
+  'NOT LIKE',
+  'IS NULL',
+  'IS NOT NULL',
+  'NOT EXISTS',
+])
+
+/**
  * Validates that a value is a safe, bare SQL identifier
  *
  * This function throws when the value is anything other than a plain
@@ -259,7 +283,15 @@ export const createWhereClause = <T>(
       if ('operator' in condition && 'value' in condition) {
         const { operator, value } = condition
 
+        assertValidIdentifier(key, 'where field')
+        if (!WHERE_OPERATOR_WHITELIST.has(operator)) {
+          throw new Error(
+            `Invalid where operator: "${operator}". Only ${[...WHERE_OPERATOR_WHITELIST].join(', ')} are allowed.`
+          )
+        }
+
         if (operator === 'NOT EXISTS' && typeof value === 'string') {
+          assertSafeSqlFragment(value, 'where NOT EXISTS subquery')
           whereParts.push(`NOT EXISTS (${value})`)
         } else if (operator.includes('NULL')) {
           whereParts.push(`${key} ${operator}`)

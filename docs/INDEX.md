@@ -57,5 +57,5 @@ If you find any issues with the documentation or want to contribute improvements
 ---
 
 **Last Updated**: 2026-09-04
-**Version**: 1.3.1
+**Version**: 1.4.0
 **Maintainer**: Starbem Tech Team

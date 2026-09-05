@@ -33,13 +33,6 @@ jobs:
 
       - run: pnpm test:ci
 
-      # No NPM_TOKEN / NODE_AUTH_TOKEN: npm auto-detects the id-token permission
-      # above and exchanges it for a short-lived publish credential via OIDC —
-      # nothing to store as a secret. Requires Trusted Publisher configured on
-      # npmjs.com for this package pointing at this repo + workflow file.
-      - run: npm install -g npm@11.5.1
-      - run: npm publish --access public
-
       - name: Build release notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -75,3 +68,14 @@ jobs:
             --notes-file release-body.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # No NPM_TOKEN / NODE_AUTH_TOKEN: npm auto-detects the id-token permission
+      # above and exchanges it for a short-lived publish credential via OIDC —
+      # nothing to store as a secret. Requires Trusted Publisher configured on
+      # npmjs.com for this package pointing at this repo + workflow file.
+      # Runs last: the GitHub Release (built from real commits, not `npm`'s
+      # own metadata) is only useful if it exists even when publish fails, and
+      # `--ignore-scripts` skips package.json's own build+test in
+      # `prepublishOnly`, which already ran above in this same job.
+      - run: npm install -g npm@11.5.1
+      - run: npm publish --access public --ignore-scripts

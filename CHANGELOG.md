@@ -9,19 +9,25 @@ Entries below are generated from the real commit history for each tagged release
 
 ## [Unreleased]
 
-Work merged since `v1.3.0`, not yet tagged/published (package.json currently at `1.3.1`):
+## [1.4.0] - 2026-09-04
 
 - `fix`: `findFirst` now adds `LIMIT 1` to the generated query instead of fetching every matching row and taking the first in JS.
 - `fix`: `update()` no longer concatenates `id` directly into the SQL string — parameterized for both pg and mysql (was a real SQL injection vector).
+- `fix`: `update()`/`updateMany()` now validate and quote every column name in `data` (`assertValidIdentifier` + `quoteIdentifier`), matching `insert`/`upsert`. Previously these column names were interpolated into the SQL string unvalidated.
+- `fix`: `createWhereClause` now validates `where` field names (`assertValidIdentifier`), restricts `operator` to a runtime whitelist, and validates `NOT EXISTS` subquery fragments (`assertSafeSqlFragment`) — previously all three were interpolated into the SQL string unvalidated.
+- `fix`: `upsert()` no longer duplicates `updated_at` in the generated `SET`/`ON CONFLICT DO UPDATE` clause when it's also named in `updateFields`.
+- `fix`: `upsert()` now rejects `updateFields`/`conflictFields` entries that aren't a key of `data`, instead of silently resolving to the column's table default (pg) or building a `WHERE col = NULL` re-select (mysql).
+- `fix`: `findManyCursor()` returns `nextCursor: null` (not `undefined`) when `select` omits `cursorField` from the returned rows, matching its declared `string | number | null` return type.
 - `feat`: `upsert()` — `ON CONFLICT ... DO UPDATE` (pg) / `ON DUPLICATE KEY UPDATE` (mysql).
 - `feat`: `findManyCursor()` — keyset/cursor pagination (`WHERE cursorField > cursor` + `LIMIT limit+1`, no `OFFSET`).
 - `feat`: `closeDb`, `closeAllDbClients`, `resetDbClients` for connection pool lifecycle management.
 - `feat`: configurable query timeout (`queryTimeout`) for `initDb` and the MySQL client.
-- Identifier sanitization added across the query builder (`assertValidIdentifier`, `assertSafeSqlFragment`) to prevent injection via table/column/field names.
+- Identifier sanitization added across the query builder (`assertValidIdentifier`, `assertSafeSqlFragment`) to prevent injection via table/column/field names, now covering every code path.
 - `insert`/`insertMany` now quote every column name for pg/mysql instead of a single hardcoded special case — fixes reserved-word columns (`order`, `group`, `user`, etc.). Surface-level SQL output change, runtime-equivalent.
-- `docs/` and `README.md` audited against the real implementation and corrected (removed a phantom `having` param on `joins()`, fixed `update`/`updateMany` examples that used an unsupported `{operator, value}` shape, fixed the `JOINS` type definition, added docs for `upsert` and `findManyCursor`).
+- `docs/` and `README.md` audited against the real implementation and corrected (removed a phantom `having` param on `joins()`, fixed `update`/`updateMany` examples that used an unsupported `{operator, value}` shape, fixed the `JOINS` type definition, added docs for `upsert`, `findManyCursor`, and the connection-pool lifecycle functions).
 - CI/CD split into `ci.yml` (lint/format/type-check/build/test on push+PR) and `release.yml` (tag-triggered, npm Trusted Publishing via OIDC, no `NPM_TOKEN`).
 - Dependency cleanup: removed unused `@typescript-eslint/eslint-plugin`/`parser`; safe in-range updates to `mysql2`, `pg`, `eslint`, `typescript`, and others.
+- Published npm package restricted to `dist`, `bin`, `.claude`, `CHANGELOG.md` via an explicit `files` allowlist — previously shipped `coverage/`, test sources, `.github/`, and other dev-only files due to a missing `files` field combined with a near-empty `.npmignore`.
 
 ## [1.3.0] - 2025-09-08
 

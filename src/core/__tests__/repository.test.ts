@@ -202,6 +202,26 @@ describe('repository', () => {
       expect(result.nextCursor).toBeNull()
     })
 
+    it('returns nextCursor null (not undefined) when select omits cursorField from the returned rows', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([
+        { name: 'a' },
+        { name: 'b' },
+        { name: 'c' },
+      ])
+
+      const result = await findManyCursor({
+        tableName: 'users',
+        dbClient,
+        select: ['name'],
+        cursorField: 'id',
+        limit: 2,
+      })
+
+      expect(result.data).toEqual([{ name: 'a' }, { name: 'b' }])
+      expect(result.nextCursor).toBeNull()
+    })
+
     it('adds the cursor condition to an existing WHERE clause using AND, after the WHERE params', async () => {
       const dbClient = createMockDbClient('pg')
       dbClient.query.mockResolvedValue([])
@@ -479,7 +499,7 @@ describe('repository', () => {
 
       const [sql, values] = dbClient.query.mock.calls[0]
       expect(sql).toBe(
-        'UPDATE users SET name = $1 WHERE id = $2 RETURNING id, name'
+        'UPDATE users SET "name" = $1 WHERE id = $2 RETURNING id, name'
       )
       expect(sql).not.toContain("'123'")
       expect(values).toEqual(['John Updated', '123'])
@@ -499,7 +519,7 @@ describe('repository', () => {
       })
 
       const [updateSql, updateValues] = dbClient.query.mock.calls[0]
-      expect(updateSql).toBe('UPDATE users SET name = ? WHERE id = ?')
+      expect(updateSql).toBe('UPDATE users SET `name` = ? WHERE id = ?')
       expect(updateValues).toEqual(['John Updated', '123'])
     })
 
@@ -516,9 +536,22 @@ describe('repository', () => {
       })
 
       const [sql, values] = dbClient.query.mock.calls[0]
-      expect(sql).toBe('UPDATE users SET name = $1 WHERE id = $2')
+      expect(sql).toBe('UPDATE users SET "name" = $1 WHERE id = $2')
       expect(sql).not.toContain('DROP TABLE')
       expect(values).toEqual(['John', maliciousId])
+    })
+
+    it('rejects a malicious column name instead of interpolating it into the SQL string', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        update({
+          tableName: 'users',
+          dbClient,
+          id: '123',
+          data: { 'name = null; DROP TABLE users; --': 'x' },
+        })
+      ).rejects.toThrow('Invalid column name')
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
   })
 
@@ -560,8 +593,21 @@ describe('repository', () => {
       })
 
       const [sql, values] = dbClient.query.mock.calls[0]
-      expect(sql).toBe('UPDATE users SET name = $1 WHERE status = $2')
+      expect(sql).toBe('UPDATE users SET "name" = $1 WHERE status = $2')
       expect(values).toEqual(['John', 'pending'])
+    })
+
+    it('rejects a malicious column name instead of interpolating it into the SQL string', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        updateMany({
+          tableName: 'users',
+          dbClient,
+          data: { 'name = null; DROP TABLE users; --': 'x' },
+          where: { status: { operator: '=', value: 'pending' } },
+        })
+      ).rejects.toThrow('Invalid column name')
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
   })
 
@@ -671,6 +717,55 @@ describe('repository', () => {
       const [selectSql, selectParams] = dbClient.query.mock.calls[1]
       expect(selectSql).toContain('WHERE `email` = ?')
       expect(selectParams).toEqual(['john@example.com'])
+    })
+
+    it('rejects updateFields naming a column not present in data instead of silently falling back to the column default (pg)', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        upsert({
+          tableName: 'users',
+          dbClient,
+          data: { email: 'john@example.com', name: 'John' },
+          conflictFields: ['email'],
+          updateFields: ['name', 'role'],
+        })
+      ).rejects.toThrow(
+        'updateFields references column(s) not present in data: [role]'
+      )
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('does not duplicate updated_at in the SET clause when updateFields already includes it (pg)', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: 'generated-uuid' }])
+
+      await upsert({
+        tableName: 'users',
+        dbClient,
+        data: { email: 'john@example.com', updated_at: new Date() },
+        conflictFields: ['email'],
+        updateFields: ['email', 'updated_at'],
+      })
+
+      const [sql] = dbClient.query.mock.calls[0]
+      const occurrences = (sql.match(/"updated_at" = EXCLUDED\."updated_at"/g) || [])
+        .length
+      expect(occurrences).toBe(1)
+    })
+
+    it('rejects conflictFields naming a column not present in data instead of re-selecting with WHERE col = NULL (mysql)', async () => {
+      const dbClient = createMockDbClient('mysql')
+      await expect(
+        upsert({
+          tableName: 'users',
+          dbClient,
+          data: { name: 'John' },
+          conflictFields: ['email'],
+        })
+      ).rejects.toThrow(
+        'conflictFields references column(s) not present in data: [email]'
+      )
+      expect(dbClient.query).not.toHaveBeenCalled()
     })
   })
 

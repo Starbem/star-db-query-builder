@@ -285,6 +285,43 @@ describe('utils', () => {
       expect(clause).toBe(' WHERE status = $3')
       expect(values).toEqual(['active'])
     })
+
+    it('rejects a malicious field name instead of interpolating it into the SQL string', () => {
+      expect(() =>
+        createWhereClause(
+          {
+            'id; DROP TABLE users; --': { operator: '=', value: '1' },
+          } as any,
+          1,
+          'pg'
+        )
+      ).toThrow('Invalid where field')
+    })
+
+    it('rejects an operator outside the known whitelist', () => {
+      expect(() =>
+        createWhereClause(
+          { status: { operator: '; DROP TABLE users; --', value: 'x' } } as any,
+          1,
+          'pg'
+        )
+      ).toThrow('Invalid where operator')
+    })
+
+    it('rejects a NOT EXISTS subquery containing statement terminators', () => {
+      expect(() =>
+        createWhereClause(
+          {
+            status: {
+              operator: 'NOT EXISTS',
+              value: 'SELECT 1; DROP TABLE users; --',
+            },
+          } as any,
+          1,
+          'pg'
+        )
+      ).toThrow('Invalid where NOT EXISTS subquery')
+    })
   })
 
   describe('createOrderByClause', () => {

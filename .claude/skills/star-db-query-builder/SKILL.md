@@ -25,7 +25,7 @@ Full reference: `docs/methods/*.md` and `README.md` in the library repo (`starbe
 import { initDb, getDbClient } from '@starbemtech/star-db-query-builder'
 
 await initDb({
-  type: 'postgres', // or 'mysql'
+  type: 'pg', // or 'mysql' — NOT 'postgres', that string throws "Unsupported database type"
   options: { host, port, user, password, database },
   // optional: name (for multiple named connections), retryOptions, queryTimeout,
   // installUnaccentExtension (pg only)
@@ -47,7 +47,7 @@ insertMany({ tableName, dbClient, data: T[], returning? })  // batch insert, eve
 update({ tableName, dbClient, id, data })                   // SET col = literal value only, see gotcha below
 updateMany({ tableName, dbClient, where, data })
 upsert({ tableName, dbClient, data, conflictFields, updateFields?, returning? })
-deleteOne({ tableName, dbClient, id, permanently? })         // soft delete by default (sets deleted_at), permanently=true for hard delete
+deleteOne({ tableName, dbClient, id, permanently? })         // soft delete by default (sets status = 'deleted'), permanently=true for hard delete
 deleteMany({ tableName, dbClient, ids, field? })             // field defaults to 'id'
 joins({ tableName, dbClient, joins: [...], where?, select?, orderBy?, groupBy?, limit?, offset? })
 rawQuery({ dbClient, sql, params? })                         // escape hatch — you write the SQL, still parameterized
@@ -58,18 +58,18 @@ withTransaction(dbClient, async (txClient) => { ... })       // auto commit/roll
 
 1. **`update()`/`updateMany()` do NOT support arithmetic updates.** `data: { stock: { operator: '-', value: qty } }` is not interpreted — it is not a supported shape at all. If you need `stock = stock - qty`, read the current value first (`findFirst`), compute in JS, then pass the literal result:
    ```ts
-   const row = await findFirst({ tableName: 'products', dbClient, where: { id: { EQUALS: productId } } })
+   const row = await findFirst({ tableName: 'products', dbClient, where: { id: { operator: '=', value: productId } } })
    await update({ tableName: 'products', dbClient, id: productId, data: { stock: row.stock - qty } })
    ```
    Do this inside `withTransaction` if it must be atomic against concurrent writes — the library does not do this for you.
 
-2. **`joins()` has no `having` parameter.** Do not write `joins({ ..., having: {...} })` — it's silently ignored/invalid, not an error you'll notice until the generated SQL misbehaves. For HAVING, use `rawQuery`.
+2. **`joins()` has no `having` parameter.** `QueryParams<T>` doesn't declare one, so `joins({ ..., having: {...} })` is a TypeScript type error, not a runtime no-op. For HAVING, use `rawQuery`.
 
 3. **`JOINS` inside a `Conditions<T>` `where` object is NOT a SQL JOIN.** It's a nested AND-group of conditions, unfortunately named. If you want an actual SQL join, use the `joins()` function, not a `JOINS` key inside `where`.
 
 4. **`upsert()` on MySQL does not put `conflictFields` in the generated SQL.** MySQL's `ON DUPLICATE KEY UPDATE` relies entirely on the table's real unique/PK constraint — `conflictFields` is only used to re-select the row afterward (MySQL has no `RETURNING`). The function does not create or verify that the constraint exists. Before using `upsert`, confirm the target table actually has a unique constraint or PK on the fields you're passing as `conflictFields` — otherwise MySQL will just insert duplicates.
 
-5. **Table/column/field names go through strict identifier validation** (`assertValidIdentifier` for `tableName`, `join.table`, `deleteMany.field`; a looser `assertSafeSqlFragment` for `select`/`groupBy`/`orderBy.field`/`join.on` that still allows real SQL expressions like `COUNT(*) as count`). Never build these strings by concatenating unsanitized user input yourself and passing them in expecting the library to catch it silently — it throws on invalid identifiers, so validate/allowlist at your own layer too if the name comes from user input.
+5. **Table/column/field names go through strict identifier validation** (`assertValidIdentifier` for `tableName`, `join.table`, `deleteMany.field`, `data` keys in `insert`/`insertMany`/`upsert`/`update`/`updateMany`, and `where` field names; a looser `assertSafeSqlFragment` for `select`/`groupBy`/`orderBy.field`/`join.on`/`where` `NOT EXISTS` subqueries that still allows real SQL expressions like `COUNT(*) as count`). Never build these strings by concatenating unsanitized user input yourself and passing them in expecting the library to catch it silently — it throws on invalid identifiers, so validate/allowlist at your own layer too if the name comes from user input.
 
 6. **`findManyCursor()` is a separate function, not a `findMany()` option.** Its return shape is `{ data, nextCursor }`, not a bare array — don't destructure it like `findMany`'s return.
 
@@ -77,16 +77,23 @@ withTransaction(dbClient, async (txClient) => { ... })       // auto commit/roll
 
 ## Where conditions (`Conditions<T>`)
 
+Every condition is `{ operator, value }` — there is no `{ EQUALS: x }` / `{ IN: [...] }` shorthand, that shape does not exist in the code:
+
 ```ts
 where: {
-  id: { EQUALS: someId },
-  status: { IN: ['active', 'pending'] },
-  createdAt: { BETWEEN: [start, end] },
-  name: { ILIKE: '%term%' },        // pg only; add unaccent: true on findMany/joins to also strip accents
-  deletedAt: { IS_NULL: true },
-  OR: [{ email: { EQUALS: a } }, { email: { EQUALS: b } }],
+  id: { operator: '=', value: someId },
+  status: { operator: 'IN', value: ['active', 'pending'] },
+  createdAt: { operator: 'BETWEEN', value: [start, end] },
+  name: { operator: 'ILIKE', value: '%term%' },   // add unaccent: true on findMany/joins to also strip accents (pg only)
+  deletedAt: { operator: 'IS NULL', value: null },
+  OR: [
+    { email: { operator: '=', value: a } },
+    { email: { operator: '=', value: b } },
+  ],
 }
 ```
+
+Valid `operator` values: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `NOT LIKE`, `ILIKE`, `IN`, `NOT IN`, `BETWEEN`, `IS NULL`, `IS NOT NULL`, `NOT EXISTS`.
 
 ## Common mistake to avoid: don't invent methods
 

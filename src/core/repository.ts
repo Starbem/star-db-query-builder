@@ -267,7 +267,7 @@ export const findManyCursor = async <T>({
 
   return {
     data,
-    nextCursor: hasMore && lastRow ? lastRow[cursorField] : null,
+    nextCursor: hasMore && lastRow ? (lastRow[cursorField] ?? null) : null,
   }
 }
 
@@ -535,10 +535,32 @@ export const upsert = async <P, R>({
 
   const rawKeys = Object.keys(data)
   rawKeys.forEach((key) => assertValidIdentifier(key, 'column name'))
+  const rawKeySet = new Set(rawKeys)
 
   const fieldsToUpdate =
     updateFields && updateFields.length > 0 ? updateFields : rawKeys
   fieldsToUpdate.forEach((key) => assertValidIdentifier(key, 'column name'))
+
+  const unknownUpdateFields = fieldsToUpdate.filter(
+    (key) => !rawKeySet.has(key)
+  )
+  if (unknownUpdateFields.length > 0) {
+    throw new Error(
+      `upsert: updateFields references column(s) not present in data: [${unknownUpdateFields.join(', ')}]. Only columns included in data can be refreshed on conflict — a column left out of data would resolve to its table default instead of the intended value.`
+    )
+  }
+
+  if (dbClient.clientType === 'mysql') {
+    const record = data as Record<string, any>
+    const missingConflictValues = conflictFields.filter(
+      (field) => record[field] === undefined
+    )
+    if (missingConflictValues.length > 0) {
+      throw new Error(
+        `upsert: conflictFields references column(s) not present in data: [${missingConflictValues.join(', ')}]. mysql has no RETURNING, so upsert() re-selects the row by these columns after the write — they must be included in data.`
+      )
+    }
+  }
 
   const keys = rawKeys.map((key) => quoteIdentifier(key, dbClient.clientType))
   const values = Object.values(data)
@@ -559,7 +581,7 @@ export const upsert = async <P, R>({
     const conflictTarget = conflictFields
       .map((field) => quoteIdentifier(field, 'pg'))
       .join(', ')
-    const updateSet = [...fieldsToUpdate, 'updated_at']
+    const updateSet = Array.from(new Set([...fieldsToUpdate, 'updated_at']))
       .map((key) => {
         const quoted = quoteIdentifier(key, 'pg')
         return `${quoted} = EXCLUDED.${quoted}`
@@ -579,7 +601,7 @@ export const upsert = async <P, R>({
     return result[0]
   }
 
-  const updateSet = [...fieldsToUpdate, 'updated_at']
+  const updateSet = Array.from(new Set([...fieldsToUpdate, 'updated_at']))
     .map((key) => {
       const quoted = quoteIdentifier(key, 'mysql')
       return `${quoted} = VALUES(${quoted})`
@@ -650,9 +672,13 @@ export const update = async <P, R>({
     throw new Error('Data object must have at least one field to update')
 
   const keys = Object.keys(data)
+  keys.forEach((key) => assertValidIdentifier(key, 'column name'))
   const values: any[] = Object.values(data)
 
-  const setClause = generateSetClause(keys, dbClient.clientType)
+  const quotedKeys = keys.map((key) =>
+    quoteIdentifier(key, dbClient.clientType)
+  )
+  const setClause = generateSetClause(quotedKeys, dbClient.clientType)
   const idPlaceholder =
     dbClient.clientType === 'pg' ? `$${values.length + 1}` : '?'
   let query = `UPDATE ${tableName} SET ${setClause} WHERE id = ${idPlaceholder}`
@@ -726,14 +752,14 @@ export const updateMany = async <P, R>({
   if (!where) throw new Error('Where condition is required')
 
   const keys = Object.keys(data)
+  keys.forEach((key) => assertValidIdentifier(key, 'column name'))
   const values: any[] = Object.values(data)
 
   // Generate SET clause with correct placeholders
-  const setClause = keys
-    .map((key, index) =>
-      dbClient.clientType === 'pg' ? `${key} = $${index + 1}` : `${key} = ?`
-    )
-    .join(', ')
+  const quotedKeys = keys.map((key) =>
+    quoteIdentifier(key, dbClient.clientType)
+  )
+  const setClause = generateSetClause(quotedKeys, dbClient.clientType)
 
   // Generate WHERE clause with placeholders starting after SET values
   const [whereClause, whereParams] = createWhereClause(

@@ -140,9 +140,12 @@ await initDb({
   type: 'pg' | 'mysql',            // Database type
   options: PoolConfig | MySqlPoolOptions, // Connection options
   retryOptions?: RetryOptions,      // Optional retry configuration
-  installUnaccentExtension?: boolean // PostgreSQL unaccent extension
+  installUnaccentExtension?: boolean, // PostgreSQL unaccent extension
+  queryTimeout?: number             // Optional query timeout in ms (see below)
 })
 ```
+
+`queryTimeout` is applied to every query run through this client. For PostgreSQL it maps onto the pool's `query_timeout` (an explicit `query_timeout` already set in `options` takes precedence over it). For MySQL, since `mysql2` has no pool-wide query timeout, it is passed as the `timeout` option on every individual query.
 
 #### PostgreSQL Example
 
@@ -207,6 +210,44 @@ const defaultClient = getDbClient()
 
 // Get named client
 const analyticsClient = getDbClient('analytics')
+```
+
+### getAllDbClients
+
+Retrieves every registered database client, keyed by the name it was registered under (including `'default'`).
+
+```typescript
+const clients = getAllDbClients() // Record<string, IDatabaseClient>
+const names = Object.keys(clients) // ['default', 'analytics', ...]
+```
+
+### closeDb
+
+Closes a database client's connection pool and removes it from the registry. Use this to release connections gracefully on application shutdown or between tests — `initDb` does not release the pools it creates on its own.
+
+```typescript
+await closeDb() // closes the default client
+await closeDb('analytics') // closes a named client
+```
+
+Throws if the named client is not initialized.
+
+### closeAllDbClients
+
+Closes every registered database client's connection pool.
+
+```typescript
+await closeAllDbClients()
+```
+
+### resetDbClients
+
+Clears the in-memory client/pool registry **without** closing any connection — a synchronous escape hatch for test suites and hot-reload tooling that need a clean registry between runs (e.g. calling `initDb` again with the same name without first awaiting a real `closeDb`). Any real, non-mocked pool left registered is orphaned, not released. Production code that wants to release connections should use `closeDb`/`closeAllDbClients` instead.
+
+```typescript
+afterEach(() => {
+  resetDbClients() // test isolation only — pools here are mocked
+})
 ```
 
 ## Query Methods
