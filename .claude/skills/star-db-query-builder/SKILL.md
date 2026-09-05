@@ -75,6 +75,10 @@ withTransaction(dbClient, async (txClient) => { ... })       // auto commit/roll
 
 7. **Values are always parameterized — never string-interpolate a value into `where`/`data`.** The library already does this correctly for you; the mistake to avoid is bypassing it via `rawQuery` with interpolated strings instead of `params`.
 
+8. **Every `where` condition must be `{ operator, value }` — a plain value throws, it is not silently ignored.** `where: { status: 'active' }` throws `Invalid where condition for "status"`; use `where: { status: { operator: '=', value: 'active' } }`. This matters most on `updateMany`/`deleteMany`: getting the shape wrong used to silently drop the condition and run the write against every row in the table — now it throws instead, but write your conditions correctly rather than relying on the error.
+
+9. **`IN`/`NOT IN`/`BETWEEN` cap at 10,000 values in `value`**, throwing a descriptive error past that — chunk the list instead of forwarding an unbounded array (e.g. raw search results) as a single condition. `BETWEEN` additionally requires exactly 2 values.
+
 ## Where conditions (`Conditions<T>`)
 
 Every condition is `{ operator, value }` — there is no `{ EQUALS: x }` / `{ IN: [...] }` shorthand, that shape does not exist in the code:

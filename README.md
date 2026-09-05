@@ -1038,7 +1038,7 @@ interface ITransactionClient {
 
 Used for building WHERE clauses with type safety.
 
-> `IN`/`NOT IN`/`BETWEEN` accept at most **10,000** values in `value`. A larger array throws a descriptive error instead of building an oversized query — chunk the list (e.g. multiple `IN` queries, or `= ANY($1::type[])` on pg) instead of forwarding an unbounded list (e.g. raw search results) as a single condition.
+> `IN`/`NOT IN`/`BETWEEN` accept at most **10,000** values in `value`. A larger array throws a descriptive error instead of building an oversized query — chunk the list (e.g. multiple `IN` queries, or `= ANY($1::type[])` on pg) instead of forwarding an unbounded list (e.g. raw search results) as a single condition. `BETWEEN` additionally requires exactly 2 values. Every condition must use the `{ operator, value }` shape — a plain value (e.g. `{ status: 'active' }`) throws instead of being silently dropped from the WHERE clause.
 
 ```typescript
 type Conditions<T> = {

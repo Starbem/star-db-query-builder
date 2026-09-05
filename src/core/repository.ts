@@ -40,7 +40,7 @@ const JOIN_TYPES = new Set(['INNER', 'LEFT', 'RIGHT', 'FULL'])
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  * })
@@ -50,7 +50,7 @@ const JOIN_TYPES = new Set(['INNER', 'LEFT', 'RIGHT', 'FULL'])
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  * })
@@ -108,7 +108,7 @@ export const findFirst = async <T>({
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  *   limit: 10,
@@ -733,7 +733,7 @@ export const update = async <P, R>({
  *   tableName: 'users',
  *   dbClient: dbClient,
  *   data: { name: 'John Doe', email: 'john.doe@example.com' },
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   returning: ['id', 'name', 'email'],
  * })
  */
@@ -768,6 +768,12 @@ export const updateMany = async <P, R>({
     values.length + 1,
     dbClient.clientType
   )
+
+  if (!whereClause) {
+    throw new Error(
+      'updateMany: where condition produced an empty WHERE clause — refusing to update every row in the table. Pass at least one condition.'
+    )
+  }
 
   let query = `UPDATE ${tableName} SET ${setClause}${whereClause}`
 
@@ -921,7 +927,7 @@ export const deleteMany = async <T>({
  *   dbClient: dbClient,
  *   select: ['id', 'name', 'email'],
  *   joins: [{ type: 'INNER', table: 'orders', on: 'users.id = orders.user_id' }],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  *   limit: 10,
@@ -1055,7 +1061,7 @@ export const rawQuery = async <T = any>({
  *   select: ['id', 'name', 'email'],
  *   from: 'users',
  *   joins: [{ type: 'INNER', table: 'orders', on: 'users.id = orders.user_id' }],
- *   where: { status: 'active' },
+ *   where: { status: { operator: '=', value: 'active' } },
  *   groupBy: ['status'],
  *   orderBy: [{ field: 'created_at', direction: 'DESC' }],
  *   limit: 10,

@@ -295,75 +295,102 @@ export const createWhereClause = <T>(
   const values: any[] = []
 
   const processCondition = (key: string, condition: Condition<T>) => {
-    if (typeof condition === 'object' && condition !== null) {
-      if ('operator' in condition && 'value' in condition) {
-        const { operator, value } = condition
+    if (
+      typeof condition !== 'object' ||
+      condition === null ||
+      !('operator' in condition) ||
+      !('value' in condition)
+    ) {
+      // A plain value (e.g. `{ status: 'active' }`) used to be silently
+      // dropped here instead of throwing — every field using that shape
+      // vanished from the WHERE clause with no error, which is how
+      // `updateMany`/`deleteMany` calls that meant to scope a write ended up
+      // running against the entire table. Fail loud instead.
+      throw new Error(
+        `Invalid where condition for "${key}": expected { operator, value }, got ${JSON.stringify(condition)}. A plain value is not a supported shape — use { ${key}: { operator: '=', value: ... } } instead.`
+      )
+    }
 
-        assertValidIdentifier(key, 'where field')
-        if (!WHERE_OPERATOR_WHITELIST.has(operator)) {
-          throw new Error(
-            `Invalid where operator: "${operator}". Only ${[...WHERE_OPERATOR_WHITELIST].join(', ')} are allowed.`
+    const { value } = condition
+    // Normalized so callers that pass a lowercase/mixed-case operator (e.g.
+    // 'ilike', supported pre-1.4.0 since the operator used to be interpolated
+    // as-is) keep working instead of silently failing the whitelist check.
+    const operator = String(
+      condition.operator
+    ).toUpperCase() as typeof condition.operator
+
+    assertValidIdentifier(key, 'where field')
+    if (!WHERE_OPERATOR_WHITELIST.has(operator)) {
+      throw new Error(
+        `Invalid where operator: "${operator}". Only ${[...WHERE_OPERATOR_WHITELIST].join(', ')} are allowed.`
+      )
+    }
+
+    if (operator === 'NOT EXISTS') {
+      if (typeof value !== 'string') {
+        throw new Error(
+          `Where condition on "${key}" uses operator "NOT EXISTS" with a non-string value. NOT EXISTS requires a raw subquery string.`
+        )
+      }
+      assertSafeSqlFragment(value, 'where NOT EXISTS subquery')
+      whereParts.push(`NOT EXISTS (${value})`)
+    } else if (operator.includes('NULL')) {
+      whereParts.push(`${key} ${operator}`)
+    } else if (Array.isArray(value)) {
+      if (operator === 'BETWEEN' && value.length !== 2) {
+        throw new Error(
+          `Where condition on "${key}" uses operator "BETWEEN" with ${value.length} values — BETWEEN requires exactly 2 (start and end).`
+        )
+      }
+
+      if (value.length > MAX_IN_LIST_SIZE) {
+        throw new Error(
+          `Where condition on "${key}" has ${value.length} values for operator "${operator}", exceeding the maximum of ${MAX_IN_LIST_SIZE}. Chunk the query instead of growing a single condition this large.`
+        )
+      }
+
+      const placeholders = value
+        .map(() =>
+          clientType === 'pg'
+            ? pgPlaceholderGenerator(index++)
+            : mysqlPlaceholderGenerator()
+        )
+        .join(', ')
+
+      if (operator === 'BETWEEN') {
+        whereParts.push(
+          `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
+        )
+      } else {
+        whereParts.push(`${key} ${operator} (${placeholders})`)
+      }
+      // Not `values.push(...value)`: spreading a large array into a
+      // function call can itself throw `RangeError: Maximum call stack
+      // size exceeded` (V8's function-call argument limit), independent
+      // of the MAX_IN_LIST_SIZE guard above catching merely-large lists.
+      for (const item of value) {
+        values.push(item)
+      }
+    } else {
+      if (unaccent && clientType === 'pg') {
+        if (operator.toUpperCase() === 'ILIKE') {
+          whereParts.push(
+            `unaccent(${key}::text) ILIKE unaccent(${pgPlaceholderGenerator(index)})`
+          )
+        } else {
+          whereParts.push(
+            `unaccent(${key}::text) ${operator} unaccent(${pgPlaceholderGenerator(index)})`
           )
         }
-
-        if (operator === 'NOT EXISTS' && typeof value === 'string') {
-          assertSafeSqlFragment(value, 'where NOT EXISTS subquery')
-          whereParts.push(`NOT EXISTS (${value})`)
-        } else if (operator.includes('NULL')) {
-          whereParts.push(`${key} ${operator}`)
-        } else if (Array.isArray(value)) {
-          if (value.length > MAX_IN_LIST_SIZE) {
-            throw new Error(
-              `Where condition on "${key}" has ${value.length} values for operator "${operator}", exceeding the maximum of ${MAX_IN_LIST_SIZE}. Chunk the query instead of growing a single condition this large.`
-            )
-          }
-
-          const placeholders = value
-            .map(() =>
-              clientType === 'pg'
-                ? pgPlaceholderGenerator(index++)
-                : mysqlPlaceholderGenerator()
-            )
-            .join(', ')
-
-          if (operator === 'BETWEEN') {
-            whereParts.push(
-              `${key} ${operator} ${placeholders.replace(', ', ' AND ')}`
-            )
-          } else if (operator === 'IN') {
-            whereParts.push(`${key} ${operator} (${placeholders})`)
-          } else {
-            whereParts.push(`${key} ${operator} (${placeholders})`)
-          }
-          // Not `values.push(...value)`: spreading a large array into a
-          // function call can itself throw `RangeError: Maximum call stack
-          // size exceeded` (V8's function-call argument limit), independent
-          // of the MAX_IN_LIST_SIZE guard above catching merely-large lists.
-          for (const item of value) {
-            values.push(item)
-          }
-        } else {
-          if (unaccent && clientType === 'pg') {
-            if (operator.toUpperCase() === 'ILIKE') {
-              whereParts.push(
-                `unaccent(${key}::text) ILIKE unaccent(${pgPlaceholderGenerator(index)})`
-              )
-            } else {
-              whereParts.push(
-                `unaccent(${key}::text) ${operator} unaccent(${pgPlaceholderGenerator(index)})`
-              )
-            }
-          } else {
-            whereParts.push(
-              clientType === 'pg'
-                ? `${key} ${operator} ${pgPlaceholderGenerator(index)}`
-                : `${key} ${operator} ${mysqlPlaceholderGenerator()}`
-            )
-          }
-          index++
-          values.push(value)
-        }
+      } else {
+        whereParts.push(
+          clientType === 'pg'
+            ? `${key} ${operator} ${pgPlaceholderGenerator(index)}`
+            : `${key} ${operator} ${mysqlPlaceholderGenerator()}`
+        )
       }
+      index++
+      values.push(value)
     }
   }
 
@@ -495,6 +522,9 @@ export const createGroupByClause = (groupBy?: string[]) => {
  */
 export const createLimitClause = (limit?: number) => {
   if (!limit) return ''
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new Error(`Invalid limit: "${limit}". Must be a positive integer.`)
+  }
   return ` LIMIT ${limit}`
 }
 
@@ -514,5 +544,10 @@ export const createLimitClause = (limit?: number) => {
  */
 export const createOffsetClause = (offset?: number) => {
   if (!offset) return ''
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error(
+      `Invalid offset: "${offset}". Must be a non-negative integer.`
+    )
+  }
   return ` OFFSET ${offset}`
 }

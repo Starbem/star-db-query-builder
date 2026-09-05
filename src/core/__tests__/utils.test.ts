@@ -308,6 +308,55 @@ describe('utils', () => {
       ).toThrow('Invalid where operator')
     })
 
+    it('normalizes a lowercase/mixed-case operator instead of rejecting it', () => {
+      const [clause, values] = createWhereClause(
+        { name: { operator: 'ilike', value: '%john%' } } as any,
+        1,
+        'pg'
+      )
+      expect(clause).toBe(' WHERE name ILIKE $1')
+      expect(values).toEqual(['%john%'])
+    })
+
+    it('rejects a plain value instead of silently dropping the condition from the WHERE clause', () => {
+      expect(() =>
+        createWhereClause({ status: 'active' } as any, 1, 'pg')
+      ).toThrow(/Invalid where condition for "status"/)
+    })
+
+    it('rejects a BETWEEN condition that does not have exactly 2 values', () => {
+      expect(() =>
+        createWhereClause(
+          { createdAt: { operator: 'BETWEEN', value: [1, 2, 3] } } as any,
+          1,
+          'pg'
+        )
+      ).toThrow(/BETWEEN requires exactly 2/)
+    })
+
+    it('rejects a NOT EXISTS condition with a non-string value', () => {
+      expect(() =>
+        createWhereClause(
+          { x: { operator: 'NOT EXISTS', value: [1, 2] } } as any,
+          1,
+          'pg'
+        )
+      ).toThrow(/NOT EXISTS requires a raw subquery string/)
+    })
+
+    it('does not let an invalid sibling condition inside OR steal an already-built WHERE part', () => {
+      expect(() =>
+        createWhereClause(
+          {
+            a: { operator: '=', value: 1 },
+            OR: [{ c: 'plain' as any }, { d: { operator: '=', value: 4 } }],
+          } as any,
+          1,
+          'pg'
+        )
+      ).toThrow(/Invalid where condition for "c"/)
+    })
+
     it('rejects an IN list larger than the documented maximum instead of building an oversized query', () => {
       const hugeList = Array.from({ length: 10_001 }, (_, i) => i)
       expect(() =>
@@ -410,6 +459,17 @@ describe('utils', () => {
     it('builds LIMIT clause', () => {
       expect(createLimitClause(10)).toBe(' LIMIT 10')
     })
+
+    it('rejects a non-numeric limit instead of interpolating it into the SQL string', () => {
+      expect(() => createLimitClause('10; DROP TABLE users' as any)).toThrow(
+        /Invalid limit/
+      )
+    })
+
+    it('rejects a negative or non-integer limit', () => {
+      expect(() => createLimitClause(-1)).toThrow(/Invalid limit/)
+      expect(() => createLimitClause(1.5)).toThrow(/Invalid limit/)
+    })
   })
 
   describe('createOffsetClause', () => {
@@ -420,6 +480,17 @@ describe('utils', () => {
 
     it('builds OFFSET clause', () => {
       expect(createOffsetClause(20)).toBe(' OFFSET 20')
+    })
+
+    it('rejects a non-numeric offset instead of interpolating it into the SQL string', () => {
+      expect(() =>
+        createOffsetClause('0 UNION SELECT 1' as any)
+      ).toThrow(/Invalid offset/)
+    })
+
+    it('rejects a negative or non-integer offset', () => {
+      expect(() => createOffsetClause(-1)).toThrow(/Invalid offset/)
+      expect(() => createOffsetClause(1.5)).toThrow(/Invalid offset/)
     })
   })
 })

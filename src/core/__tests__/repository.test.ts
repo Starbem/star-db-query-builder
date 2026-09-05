@@ -568,6 +568,21 @@ describe('repository', () => {
       ).rejects.toThrow('Where condition is required')
     })
 
+    it('refuses to update every row when where produces an empty WHERE clause', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        updateMany({
+          tableName: 'users',
+          dbClient,
+          data: { name: 'x' },
+          where: {},
+        })
+      ).rejects.toThrow(
+        'refusing to update every row in the table'
+      )
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
     it('throws when data has no fields to update', async () => {
       const dbClient = createMockDbClient()
       await expect(
