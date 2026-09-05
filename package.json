@@ -8,6 +8,12 @@
   "bin": {
     "star-db-query-builder-install-skill": "./bin/install-skill.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    ".claude",
+    "CHANGELOG.md"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=18"
