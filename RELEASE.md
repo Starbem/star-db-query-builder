@@ -47,7 +47,15 @@ Step-by-step for cutting a new release of `@starbemtech/star-db-query-builder`.
    git commit -m "docs: update changelog for version X.Y.Z"
    ```
 
-6. **Bump the version and create the tag.** This updates `package.json`'s `version` field, commits it, and creates a local `vX.Y.Z` tag:
+6. **Bump the version and create the tag.**
+
+   Check `package.json`'s current `version` first — if the merged PR already bumped it by hand (as opposed to leaving it untouched for this step to bump), **do not** run `pnpm run version:*` again; that would bump a second time (e.g. an already-set `1.4.0` becoming `1.5.0` instead of being tagged as `1.4.0`). In that case just create and push the tag matching the version already in `package.json`:
+
+   ```bash
+   git tag vX.Y.Z   # X.Y.Z = the version already in package.json
+   ```
+
+   Otherwise, if `package.json` still has the previous release's version, bump it normally — this updates `package.json`'s `version` field, commits it, and creates a local `vX.Y.Z` tag:
 
    ```bash
    pnpm run version:patch   # or version:minor / version:major
@@ -66,7 +74,7 @@ Step-by-step for cutting a new release of `@starbemtech/star-db-query-builder`.
 
 8. **Watch the release workflow:** https://github.com/starbem/star-db-query-builder/actions
 
-   It runs, in order: install → build → test:ci → `npm publish --access public` (via OIDC Trusted Publishing, no token) → generates release notes from real `git log` commits since the previous tag → creates the GitHub Release.
+   It runs, in order: install → build → test:ci → generates release notes from real `git log` commits since the previous tag → creates the GitHub Release → `npm publish --access public --ignore-scripts` (via OIDC Trusted Publishing, no token). Notes/release are created before publish so the GitHub Release exists even if the publish step itself fails.
 
 9. **Verify after it finishes:**
 
