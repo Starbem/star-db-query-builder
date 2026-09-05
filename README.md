@@ -11,8 +11,10 @@ A powerful and flexible database query builder library for Node.js applications,
 - [Query Methods](#query-methods)
   - [findFirst](#findfirst)
   - [findMany](#findmany)
+  - [findManyCursor](#findmanycursor)
   - [insert](#insert)
   - [insertMany](#insertmany)
+  - [upsert](#upsert)
   - [update](#update)
   - [updateMany](#updatemany)
   - [deleteOne](#deleteone)
@@ -29,6 +31,16 @@ A powerful and flexible database query builder library for Node.js applications,
 - [Error Handling](#error-handling)
 - [Contributing](#contributing)
 - [License](#license)
+
+## 📚 Full Documentation
+
+This README covers everything at a glance. For the deep-dive version of each method (parameters, generated SQL for pg/mysql, edge cases, error messages), see [`docs/INDEX.md`](docs/INDEX.md) or jump straight to a method:
+
+- [findFirst](docs/methods/findFirst.md) · [findMany](docs/methods/findMany.md) · [findManyCursor](docs/methods/findManyCursor.md)
+- [insert](docs/methods/insert.md) · [insertMany](docs/methods/insertMany.md) · [upsert](docs/methods/upsert.md)
+- [joins](docs/methods/joins.md) · [rawQuery](docs/methods/rawQuery.md) · [transactions](docs/methods/transactions.md)
+
+`update`, `updateMany`, `deleteOne`, `deleteMany`, `initDb`, `getDbClient` have no dedicated file yet in `docs/methods/` — this README and the JSDoc above each function in `src/core/repository.ts` are the reference for those until one exists.
 
 ## ✨ Features
 
@@ -191,6 +203,8 @@ const analyticsClient = getDbClient('analytics')
 
 ### findFirst
 
+📖 [Full docs](docs/methods/findFirst.md)
+
 Finds the first record that matches the specified conditions.
 
 ```typescript
@@ -247,6 +261,8 @@ const latestUser = await findFirst({
 ```
 
 ### findMany
+
+📖 [Full docs](docs/methods/findMany.md)
 
 Finds multiple records that match the specified conditions.
 
@@ -310,7 +326,55 @@ const userStats = await findMany({
 })
 ```
 
+### findManyCursor
+
+📖 [Full docs](docs/methods/findManyCursor.md)
+
+Finds multiple records using keyset (cursor) pagination instead of offset/limit — cost stays flat regardless of page depth, and pages don't skip/repeat rows when data changes between calls.
+
+```typescript
+const page = await findManyCursor<T>({
+  tableName: string,
+  dbClient: IDatabaseClient,
+  select?: string[],
+  where?: Conditions<T>,
+  cursorField?: string,      // default: 'id'
+  cursor?: string | number,  // omit for the first page
+  direction?: 'ASC' | 'DESC',// default: 'ASC'
+  limit?: number,            // default: 20
+  unaccent?: boolean
+}): Promise<{ data: T[]; nextCursor: string | number | null }>
+```
+
+#### Examples
+
+```typescript
+// First page
+const page1 = await findManyCursor({
+  tableName: 'users',
+  dbClient,
+  where: { status: { operator: '=', value: 'active' } },
+  cursorField: 'created_at',
+  limit: 20,
+})
+
+// Next page
+const page2 = await findManyCursor({
+  tableName: 'users',
+  dbClient,
+  cursorField: 'created_at',
+  cursor: page1.nextCursor,
+  limit: 20,
+})
+
+// page.nextCursor is null once there are no more rows past this page
+```
+
+`findManyCursor` is a separate function, not an option on `findMany` — its return shape (`{ data, nextCursor }`) differs from `findMany`'s plain `T[]`.
+
 ### insert
+
+📖 [Full docs](docs/methods/insert.md)
 
 Inserts a single record into the database.
 
@@ -377,6 +441,8 @@ const user: User = await insert<UserData, User>({
 
 ### insertMany
 
+📖 [Full docs](docs/methods/insertMany.md)
+
 Inserts multiple records into the database in a single operation.
 
 ```typescript
@@ -413,6 +479,47 @@ const users = await insertMany({
   returning: ['id', 'name', 'email'],
 })
 ```
+
+### upsert
+
+📖 [Full docs](docs/methods/upsert.md)
+
+Inserts a record, or updates it in place when it collides with an existing unique/primary key constraint. `conflictFields` must name columns already covered by a **real unique or primary key constraint** on `tableName` — `upsert` does not create or verify that constraint, it only builds SQL that assumes it exists.
+
+```typescript
+const result = await upsert<P, R>({
+  tableName: string,
+  dbClient: IDatabaseClient,
+  data: P,
+  conflictFields: string[],   // must match a real unique/PK constraint
+  updateFields?: string[],    // default: every field in `data`
+  returning?: string[]
+})
+```
+
+#### Examples
+
+```typescript
+// Insert a user, or update name/age if the email already exists
+// (requires: CREATE UNIQUE INDEX idx_users_email ON users(email);)
+const user = await upsert({
+  tableName: 'users',
+  dbClient,
+  data: { email: 'john@example.com', name: 'John Doe', age: 30 },
+  conflictFields: ['email'],
+})
+
+// Only refresh `name` on conflict, leave other fields untouched
+const user = await upsert({
+  tableName: 'users',
+  dbClient,
+  data: { email: 'john@example.com', name: 'John Doe', role: 'admin' },
+  conflictFields: ['email'],
+  updateFields: ['name'],
+})
+```
+
+> On mysql, `conflictFields` is **not** part of the generated SQL — `ON DUPLICATE KEY UPDATE` relies entirely on the table's own constraint to detect the conflict. `conflictFields` there is used only to re-select the row afterwards, since mysql has no `RETURNING`.
 
 ### update
 
@@ -486,12 +593,15 @@ const updatedUsers = await updateMany({
 })
 
 // Update with complex conditions
+// updateMany() sets columns to the literal value passed in `data` — it does
+// not interpret an { operator, value } shape as an arithmetic update. Read
+// the current value first if you need to increment/decrement it.
 const updatedUsers = await updateMany({
   tableName: 'users',
   dbClient,
   data: {
     last_login: new Date(),
-    login_count: { operator: '+', value: 1 },
+    login_count: currentLoginCount + 1,
   },
   where: {
     AND: [
@@ -571,6 +681,8 @@ await deleteMany({
 
 ### joins
 
+📖 [Full docs](docs/methods/joins.md)
+
 Executes queries with JOIN operations.
 
 ```typescript
@@ -637,14 +749,15 @@ const report = await joins({
     },
   ],
   groupBy: ['users.id', 'users.name', 'users.email', 'plans.name'],
-  having: {
-    'COUNT(orders.id)': { operator: '>', value: 0 },
-  },
   orderBy: [{ field: 'total_spent', direction: 'DESC' }],
 })
 ```
 
+> `joins()` has no `having` parameter. Filter on the aggregate at the application layer, or use `rawQuery` if you need a real `HAVING` clause.
+
 ### rawQuery
+
+📖 [Full docs](docs/methods/rawQuery.md)
 
 Executes raw SQL queries directly on the database.
 
@@ -689,6 +802,8 @@ const stats = await rawQuery({
 
 ## Transactions
 
+📖 [Full docs](docs/methods/transactions.md)
+
 Execute multiple database operations within a single transaction to ensure data consistency and atomicity.
 
 ### withTransaction
@@ -709,6 +824,7 @@ import {
   withTransaction,
   insert,
   update,
+  findFirst,
 } from '@starbemtech/star-db-query-builder'
 
 // Create user with profile in a single transaction
@@ -764,13 +880,22 @@ const processOrder = async (orderData: any, orderItems: any[]) => {
 
       totalAmount += item.price * item.quantity
 
-      // Update product stock
+      // update() sets columns to the literal value passed in `data` — it
+      // does not interpret { operator, value } as an arithmetic update.
+      // Read the current stock first, then write the computed result.
+      const product = await findFirst({
+        tableName: 'products',
+        dbClient: tx,
+        select: ['stock'],
+        where: { id: { operator: '=', value: item.product_id } },
+      })
+
       await update({
         tableName: 'products',
         dbClient: tx,
         id: item.product_id,
         data: {
-          stock: { operator: '-', value: item.quantity },
+          stock: product.stock - item.quantity,
         },
       })
     }
@@ -892,7 +1017,10 @@ interface OperatorCondition {
 interface LogicalCondition<T> {
   OR?: Conditions<T>[]
   AND?: Conditions<T>[]
-  JOINS?: Conditions<object>
+  // Nested AND-group rendered as its own parenthesized clause, e.g.
+  // `(a = $1 AND b = $2)`. Despite the name this has nothing to do with SQL
+  // JOINs — see the `joins()` query function for that.
+  JOINS?: Conditions<object>[]
   notExists?: OperatorCondition
 }
 ```
@@ -937,19 +1065,6 @@ const users = await findMany({
       { created_at: { operator: '>=', value: new Date('2023-01-01') } },
     ],
   },
-})
-```
-
-### Using Unaccent for PostgreSQL
-
-```typescript
-const users = await findMany({
-  tableName: 'users',
-  dbClient,
-  where: {
-    name: { operator: 'ILIKE', value: '%joão%' },
-  },
-  unaccent: true, // Enables unaccent search
 })
 ```
 
