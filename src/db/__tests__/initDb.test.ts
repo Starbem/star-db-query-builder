@@ -92,7 +92,11 @@ describe('initDb / getDbClient / closeDb', () => {
     })
 
     it('maps queryTimeout onto the pg pool as query_timeout', async () => {
-      await initDb({ type: 'pg', options: { host: 'localhost' }, queryTimeout: 3000 })
+      await initDb({
+        type: 'pg',
+        options: { host: 'localhost' },
+        queryTimeout: 3000,
+      })
 
       expect(Pool).toHaveBeenCalledWith(
         expect.objectContaining({ host: 'localhost', query_timeout: 3000 })

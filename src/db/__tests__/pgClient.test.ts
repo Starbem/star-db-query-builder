@@ -23,7 +23,17 @@ jest.mock('../../monitor/monitor', () => ({
 }))
 
 describe('PgClient', () => {
-  let mockPool: jest.Mocked<Pool>
+  // `pg`'s `Pool.query`/`connect` are heavily overloaded, which makes
+  // `jest.Mocked<Pool>['query']` collapse to an unusable `never` parameter
+  // type on `.mockResolvedValue(...)` — widen just the two methods these
+  // tests actually stub to a plain `jest.Mock` instead. A `jest.Mock`'s
+  // `(...args: any[]) => any` call signature is still assignable to `Pool`'s
+  // overloaded one, so `mockPool` can still be passed anywhere a real `Pool`
+  // is expected.
+  let mockPool: Omit<jest.Mocked<Pool>, 'query' | 'connect'> & {
+    query: jest.Mock
+    connect: jest.Mock
+  }
 
   beforeEach(() => {
     mockPool = {
@@ -48,9 +58,10 @@ describe('PgClient', () => {
       const mockRows = [{ id: 1, name: 'John Doe' }]
       mockPool.query.mockResolvedValue({ rows: mockRows, rowCount: 1 } as any)
       const client = await createPgClient(mockPool)
-      const result = await client.query('SELECT * FROM users WHERE id = $1', [
-        1,
-      ])
+      const result = await client.query(
+        'SELECT * FROM users WHERE id = $1',
+        [1]
+      )
       expect(mockPool.query).toHaveBeenCalledWith(
         'SELECT * FROM users WHERE id = $1',
         [1]
@@ -73,9 +84,10 @@ describe('PgClient', () => {
     it('should handle empty result set', async () => {
       mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 } as any)
       const client = await createPgClient(mockPool)
-      const result = await client.query('SELECT * FROM users WHERE id = $1', [
-        999,
-      ])
+      const result = await client.query(
+        'SELECT * FROM users WHERE id = $1',
+        [999]
+      )
       expect(result).toEqual([])
     })
 
@@ -176,6 +188,10 @@ describe('PgClient', () => {
         expect(transaction).toHaveProperty('query')
         expect(transaction).toHaveProperty('commit')
         expect(transaction).toHaveProperty('rollback')
+        // Required so a transaction client can itself be passed as `dbClient`
+        // to findFirst/insert/update/etc (the documented withTransaction
+        // pattern) — those functions dispatch pg vs mysql SQL off this field.
+        expect(transaction.clientType).toBe('pg')
       })
 
       it('should execute queries within transaction', async () => {

@@ -54,6 +54,12 @@ describe('utils', () => {
         assertSafeSqlFragment('id -- comment', 'select field')
       ).toThrow(/Invalid select field/)
     })
+
+    it('rejects a fragment with a MySQL-style # comment marker', () => {
+      expect(() =>
+        assertSafeSqlFragment('id # comment', 'orderBy field')
+      ).toThrow(/Invalid orderBy field/)
+    })
   })
 
   describe('createSelectFields', () => {
@@ -69,9 +75,9 @@ describe('utils', () => {
     })
 
     it('allows aggregate/expression fields as documented', () => {
-      expect(
-        createSelectFields(['status', 'COUNT(*) as count'], 'pg')
-      ).toBe('status, COUNT(*) as count')
+      expect(createSelectFields(['status', 'COUNT(*) as count'], 'pg')).toBe(
+        'status, COUNT(*) as count'
+      )
     })
 
     it('throws when a field contains a stacked query', () => {
@@ -161,7 +167,12 @@ describe('utils', () => {
 
     it('handles BETWEEN operator with array value', () => {
       const [clause, values] = createWhereClause(
-        { created_at: { operator: 'BETWEEN', value: ['2023-01-01', '2023-12-31'] } },
+        {
+          created_at: {
+            operator: 'BETWEEN',
+            value: ['2023-01-01', '2023-12-31'],
+          },
+        },
         1,
         'pg'
       )
@@ -202,9 +213,7 @@ describe('utils', () => {
         'pg',
         true
       )
-      expect(clause).toBe(
-        ' WHERE unaccent(name::text) ILIKE unaccent($1)'
-      )
+      expect(clause).toBe(' WHERE unaccent(name::text) ILIKE unaccent($1)')
       expect(values).toEqual(['%joao%'])
     })
 
@@ -290,6 +299,58 @@ describe('utils', () => {
       expect(values).toEqual(['active', '1'])
     })
 
+    it('does not drop a second key from an AND element with multiple conditions', () => {
+      const [clause, values] = createWhereClause(
+        {
+          AND: [
+            {
+              status: { operator: '=', value: 'active' },
+              tenant_id: { operator: '=', value: 'tenant-1' },
+            },
+          ],
+        } as any,
+        1,
+        'pg'
+      )
+      expect(clause).toBe(' WHERE ((status = $1 AND tenant_id = $2))')
+      expect(values).toEqual(['active', 'tenant-1'])
+    })
+
+    it('does not drop a second key from an OR element with multiple conditions', () => {
+      const [clause, values] = createWhereClause(
+        {
+          OR: [
+            {
+              status: { operator: '=', value: 'active' },
+              role: { operator: '=', value: 'admin' },
+            },
+            { status: { operator: '=', value: 'pending' } },
+          ],
+        } as any,
+        1,
+        'pg'
+      )
+      expect(clause).toBe(' WHERE ((status = $1 AND role = $2) OR status = $3)')
+      expect(values).toEqual(['active', 'admin', 'pending'])
+    })
+
+    it('does not drop a second key from a JOINS element with multiple conditions', () => {
+      const [clause, values] = createWhereClause(
+        {
+          JOINS: [
+            {
+              user_id: { operator: '=', value: '1' },
+              active: { operator: '=', value: true },
+            },
+          ],
+        } as any,
+        1,
+        'pg'
+      )
+      expect(clause).toBe(' WHERE ((user_id = $1 AND active = $2))')
+      expect(values).toEqual(['1', true])
+    })
+
     it('starts placeholder numbering from the given startIndex', () => {
       const [clause, values] = createWhereClause(
         { status: { operator: '=', value: 'active' } },
@@ -346,6 +407,40 @@ describe('utils', () => {
           'pg'
         )
       ).toThrow(/BETWEEN requires exactly 2/)
+    })
+
+    it('rejects an IN condition with an empty array instead of building invalid SQL ("IN ()")', () => {
+      expect(() =>
+        createWhereClause({ id: { operator: 'IN', value: [] } } as any, 1, 'pg')
+      ).toThrow(/empty array/)
+    })
+
+    it('rejects a NOT IN condition with an empty array instead of building invalid SQL', () => {
+      expect(() =>
+        createWhereClause(
+          { id: { operator: 'NOT IN', value: [] } } as any,
+          1,
+          'pg'
+        )
+      ).toThrow(/empty array/)
+    })
+
+    it('rejects an empty AND array instead of building the invalid fragment "()"', () => {
+      expect(() => createWhereClause({ AND: [] } as any, 1, 'pg')).toThrow(
+        /AND.*empty array/
+      )
+    })
+
+    it('rejects an empty OR array instead of building the invalid fragment "()"', () => {
+      expect(() => createWhereClause({ OR: [] } as any, 1, 'pg')).toThrow(
+        /OR.*empty array/
+      )
+    })
+
+    it('rejects an empty JOINS array instead of building the invalid fragment "()"', () => {
+      expect(() => createWhereClause({ JOINS: [] } as any, 1, 'pg')).toThrow(
+        /JOINS.*empty array/
+      )
     })
 
     it('rejects a NOT EXISTS condition with a non-string value', () => {
@@ -497,9 +592,9 @@ describe('utils', () => {
     })
 
     it('rejects a non-numeric offset instead of interpolating it into the SQL string', () => {
-      expect(() =>
-        createOffsetClause('0 UNION SELECT 1' as any)
-      ).toThrow(/Invalid offset/)
+      expect(() => createOffsetClause('0 UNION SELECT 1' as any)).toThrow(
+        /Invalid offset/
+      )
     })
 
     it('rejects a negative or non-integer offset', () => {

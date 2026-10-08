@@ -2,9 +2,12 @@ import { Conditions, Condition, OrderBy, DBClients } from './types'
 
 /**
  * Matches a bare SQL identifier, optionally schema/table-qualified
- * (e.g. "id", "users", "users.id"). Used to validate table names,
- * GROUP BY / ORDER BY fields, join tables and delete-by fields, since
- * those are always plain identifiers and never need SQL expressions.
+ * (e.g. "id", "users", "users.id"). Used to validate table names, join
+ * tables, `where` field keys and delete-by fields, since those are always
+ * plain identifiers and never need SQL expressions. GROUP BY / ORDER BY
+ * fields are intentionally *not* restricted to this — they go through
+ * `assertSafeSqlFragment` instead, since both are documented to accept a
+ * full SQL expression (e.g. `COUNT(*) as total`), not just a bare column.
  */
 const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/
 
@@ -12,9 +15,12 @@ const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/
  * Matches characters that have no legitimate use inside a SELECT
  * expression or a JOIN ON condition (statement terminators, comment
  * markers, backticks) but that are the building blocks of classic
- * SQL injection (stacked queries, comment-based truncation).
+ * SQL injection (stacked queries, comment-based truncation). Includes `#`,
+ * MySQL's own single-line comment marker (distinct from the `--`/`/* *‍/`
+ * forms both dialects share) — previously missing here, so a fragment like
+ * `id # , (SELECT ...)` on a MySQL connection passed this check untouched.
  */
-const DANGEROUS_SQL_PATTERN = /(;|--|\/\*|\*\/|`)/
+const DANGEROUS_SQL_PATTERN = /(;|--|\/\*|\*\/|`|#)/
 
 /**
  * Maximum number of values accepted in a single `IN`/`NOT IN`/`BETWEEN`
@@ -84,6 +90,32 @@ const WHERE_OPERATOR_WHITELIST = new Set([
   'IS NOT NULL',
   'NOT EXISTS',
 ])
+
+/**
+ * Drops every key whose value is `undefined` from a write payload (`update`
+ * / `updateMany`'s `data`).
+ *
+ * A partial DTO built by spreading an object with an optional, unset field
+ * (`{ ...partial }`) routinely carries an explicit `undefined` for that key
+ * rather than omitting it — `Object.keys`/`Object.values` still see it. Left
+ * in, it reaches the driver as a real bind parameter: node-postgres silently
+ * coerces it to SQL `NULL` (overwriting the column instead of leaving it
+ * untouched), while mysql2 rejects it outright. Filtering it out here makes
+ * "didn't pass a value" behave the same way on both drivers: the column is
+ * left alone, matching how a plain REST PATCH body treats a missing field.
+ *
+ * @param data - The write payload to filter
+ * @returns A shallow copy of `data` with every `undefined`-valued key removed
+ */
+export const stripUndefinedValues = <T extends object>(data: T): Partial<T> => {
+  const result: Partial<T> = {}
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      ;(result as Record<string, unknown>)[key] = value
+    }
+  }
+  return result
+}
 
 /**
  * Validates that a value is a safe, bare SQL identifier
@@ -405,6 +437,16 @@ export const createWhereClause = <T>(
         )
       }
 
+      if (value.length === 0 && operator !== 'BETWEEN') {
+        // `key IN ()` / `key NOT IN ()` is a SQL syntax error on both pg and
+        // MySQL (the list must have at least one element) — fail with a
+        // clear message instead of handing the caller that opaque driver
+        // error once the query reaches the database.
+        throw new Error(
+          `Where condition on "${key}" uses operator "${operator}" with an empty array — this has no valid SQL translation. Pass at least one value, or omit the condition entirely if there is nothing to filter by.`
+        )
+      }
+
       if (value.length > MAX_IN_LIST_SIZE) {
         throw new Error(
           `Where condition on "${key}" has ${value.length} values for operator "${operator}", exceeding the maximum of ${MAX_IN_LIST_SIZE}. Chunk the query instead of growing a single condition this large.`
@@ -461,26 +503,58 @@ export const createWhereClause = <T>(
     processCondition(key, value as Condition<T>)
   })
 
+  // A group element (one entry of an `OR`/`AND`/`JOINS` array) can carry more
+  // than one key, e.g. `{ status: ..., tenant_id: ... }` — those sibling keys
+  // are ANDed together, same as sibling keys at the top level of `where`.
+  // Only ever reading `Object.keys(subCondition)[0]` here used to silently
+  // drop every key past the first, which is how a scoping condition (e.g.
+  // `tenant_id`) placed alongside another key inside the same group element
+  // could vanish from the generated SQL with no error.
+  const processGroupElement = (subCondition: unknown): string => {
+    if (
+      typeof subCondition !== 'object' ||
+      Array.isArray(subCondition) ||
+      subCondition === null
+    ) {
+      return ''
+    }
+
+    const parts = Object.entries(subCondition).map(([key, condition]) => {
+      // Adiciona o tratamento de unaccent nas condições do grupo também
+      processCondition(key, condition as Condition<T>)
+      return whereParts.pop() as string
+    })
+
+    // Parenthesized whenever there's more than one key so this element's
+    // AND binds as a unit regardless of the surrounding logical operator
+    // (matters when this element sits inside an `OR` group).
+    return parts.length > 1 ? `(${parts.join(' AND ')})` : parts.join(' AND ')
+  }
+
+  // An empty `AND`/`OR`/`JOINS` array has no unambiguous SQL meaning (and
+  // isn't valid SQL syntax either way) — it used to silently render as the
+  // bare fragment "()", producing a query like `WHERE ()` or `WHERE a = $1
+  // AND ()`. Fail loud instead of handing the caller that syntax error once
+  // it reaches the database.
+  const assertNonEmptyGroup = (
+    compositeConditions: unknown[],
+    label: 'JOINS' | 'OR' | 'AND'
+  ) => {
+    if (compositeConditions.length === 0) {
+      throw new Error(
+        `Where condition "${label}" is an empty array — remove the key instead of passing an empty group.`
+      )
+    }
+  }
+
   if ('JOINS' in conditions) {
     const compositeConditions = conditions.JOINS
 
     if (Array.isArray(compositeConditions)) {
-      const subWhereParts = compositeConditions
-        .map((subCondition: any) => {
-          if (
-            typeof subCondition === 'object' &&
-            !Array.isArray(subCondition) &&
-            subCondition !== null
-          ) {
-            const key = Object.keys(subCondition)[0]
-            const condition = subCondition[key]
+      assertNonEmptyGroup(compositeConditions, 'JOINS')
 
-            // Adiciona o tratamento de unaccent nas condições de JOINS
-            processCondition(key, condition)
-            return whereParts.pop()
-          }
-          return ''
-        })
+      const subWhereParts = compositeConditions
+        .map(processGroupElement)
         .filter((part) => part)
 
       whereParts.push(`(${subWhereParts.join(' AND ')})`)
@@ -492,22 +566,10 @@ export const createWhereClause = <T>(
     logicalOperator: 'OR' | 'AND'
   ) => {
     if (!Array.isArray(compositeConditions)) return
+    assertNonEmptyGroup(compositeConditions, logicalOperator)
 
     const subWhereParts = compositeConditions
-      .map((subCondition: any) => {
-        if (
-          typeof subCondition === 'object' &&
-          !Array.isArray(subCondition) &&
-          subCondition !== null
-        ) {
-          const key = Object.keys(subCondition)[0]
-          const condition = subCondition[key]
-          processCondition(key, condition) // Certifica que o unaccent é processado aqui também
-          return whereParts.pop()
-        }
-
-        return ''
-      })
+      .map(processGroupElement)
       .filter((part) => part)
 
     whereParts.push(`(${subWhereParts.join(` ${logicalOperator} `)})`)

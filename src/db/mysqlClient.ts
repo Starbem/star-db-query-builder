@@ -126,6 +126,7 @@ export const createMysqlClient = (
         await connection.beginTransaction()
 
         return {
+          clientType: 'mysql',
           query: async <T>(sql: string, params?: any[]): Promise<T> => {
             const startTime = Date.now()
             try {

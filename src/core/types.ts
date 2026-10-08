@@ -1,4 +1,4 @@
-import { IDatabaseClient } from '../db/IDatabaseClient'
+import { IDatabaseClient, IQueryClient } from '../db/IDatabaseClient'
 
 export interface RetryOptions {
   retries?: number
@@ -40,16 +40,28 @@ export type LogicalOperator = 'OR' | 'AND'
 
 export type Condition<T> = OperatorCondition | LogicalCondition<T>
 
+/**
+ * A condition keyed by a table-qualified column (e.g. `'orders.total'`),
+ * used inside `OR`/`AND`/`JOINS` to reference a column outside `T` — such as
+ * a joined table's column in `joins()`. Matched structurally by any key
+ * containing a dot, so it never swallows a plain (unqualified) typo of one
+ * of `T`'s own keys, which still only matches `Conditions<T>`.
+ */
+type QualifiedCondition = Record<
+  `${string}.${string}`,
+  Condition<unknown> | undefined
+>
+
 interface LogicalCondition<T> {
-  OR?: Conditions<T>[]
-  AND?: Conditions<T>[]
+  OR?: (Conditions<T> | QualifiedCondition)[]
+  AND?: (Conditions<T> | QualifiedCondition)[]
   /**
    * A nested AND-group of conditions rendered as its own parenthesized clause,
    * e.g. `(a = $1 AND b = $2)`. Despite the name this has nothing to do with
    * SQL JOINs (see the `joins()` query function for that) — it exists
    * alongside sibling top-level conditions rather than replacing them.
    */
-  JOINS?: Conditions<object>[]
+  JOINS?: (Conditions<T> | QualifiedCondition)[]
   notExists?: OperatorCondition
 }
 
@@ -63,7 +75,7 @@ export type OrderBy = { field: string; direction: 'ASC' | 'DESC' }[]
 
 export interface QueryParams<T> {
   tableName: string
-  dbClient: IDatabaseClient
+  dbClient: IQueryClient
   id?: string
   select?: string[]
   where?: Conditions<T>
@@ -103,7 +115,7 @@ export interface CursorPageResult<T> {
 }
 
 export interface RawQueryParams {
-  dbClient: IDatabaseClient
+  dbClient: IQueryClient
   sql: string
   params?: any[]
 }

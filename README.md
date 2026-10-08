@@ -27,6 +27,11 @@ The library is organized into three modules under `src/`:
 
 Note: `ARCHITECTURE.md` in this repo references an older `default/genericRepository.ts` layout — the current source of truth is `src/core/`, `src/db/`, and `src/monitor/` as described above.
 
+## Security & Operational Notes
+
+- **`monitor` events carry raw query parameters.** `QUERY_START`/`QUERY_END`/`QUERY_ERROR` include the unredacted `params` array passed to `dbClient.query(...)` — the same values bound into the SQL (user emails, document numbers, health data depending on what a service queries by). If your service attaches a listener that logs or forwards these events (e.g. to Datadog/Sentry), redact or drop `params` before persisting the event anywhere subject to LGPD, rather than logging the monitor payload as-is.
+- **Automatic retry is not aware of query idempotency.** `retryOptions` (on `initDb`/`createPgClient`/`createMysqlClient`) retries any query — including `rawQuery` and non-idempotent statements like `UPDATE ... SET n = n + 1` — on a transient connection error (`ECONNRESET`, `ETIMEDOUT`, etc.). If the original attempt's statement actually reached the database before the connection dropped, a retry can apply it twice. Prefer idempotent statements (keyed upserts, conditional updates) for anything run under `retryOptions`, or disable retries for statements where a double-apply would be unsafe.
+
 ## Folder Structure
 
 ```

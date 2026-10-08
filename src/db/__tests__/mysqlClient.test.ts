@@ -108,9 +108,10 @@ describe('MySqlClient', () => {
       mockPool.execute.mockResolvedValue([[], []] as any)
 
       const client = createMysqlClient(mockPool)
-      const result = await client.query('SELECT * FROM users WHERE id = ?', [
-        999,
-      ])
+      const result = await client.query(
+        'SELECT * FROM users WHERE id = ?',
+        [999]
+      )
 
       expect(result).toEqual([])
     })
@@ -212,6 +213,10 @@ describe('MySqlClient', () => {
         expect(transaction).toHaveProperty('query')
         expect(transaction).toHaveProperty('commit')
         expect(transaction).toHaveProperty('rollback')
+        // Required so a transaction client can itself be passed as `dbClient`
+        // to findFirst/insert/update/etc (the documented withTransaction
+        // pattern) — those functions dispatch pg vs mysql SQL off this field.
+        expect(transaction.clientType).toBe('mysql')
       })
 
       it('should execute queries within transaction', async () => {

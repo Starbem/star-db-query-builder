@@ -169,6 +169,7 @@ export const createPgClient = async (
         await client.query('BEGIN')
 
         return {
+          clientType: 'pg',
           query: async <T>(sql: string, params?: any[]): Promise<T> => {
             const startTime = Date.now()
             try {

@@ -4,6 +4,7 @@ import {
   QueryBuilder,
   RawQueryParams,
   CursorPageResult,
+  Conditions,
 } from './types'
 import { IDatabaseClient, ITransactionClient } from '../db/IDatabaseClient'
 import {
@@ -20,6 +21,7 @@ import {
   assertNoAutoManagedColumns,
   assertWithinBindParamLimit,
   quoteIdentifier,
+  stripUndefinedValues,
 } from './utils'
 
 const JOIN_TYPES = new Set(['INNER', 'LEFT', 'RIGHT', 'FULL'])
@@ -679,12 +681,14 @@ export const update = async <P, R>({
   if (!id)
     throw new Error(`ID is required for update() on table "${tableName}"`)
   if (!data) throw new Error('Data object is required')
-  if (Object.keys(data).length === 0)
+
+  const definedData = stripUndefinedValues(data as object)
+  if (Object.keys(definedData).length === 0)
     throw new Error('Data object must have at least one field to update')
 
-  const keys = Object.keys(data)
+  const keys = Object.keys(definedData)
   keys.forEach((key) => assertValidIdentifier(key, 'column name'))
-  const values: any[] = Object.values(data)
+  const values: any[] = Object.values(definedData)
 
   const quotedKeys = keys.map((key) =>
     quoteIdentifier(key, dbClient.clientType)
@@ -758,13 +762,14 @@ export const updateMany = async <P, R>({
   assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
   if (!data) throw new Error('Data object is required')
-  if (Object.keys(data).length === 0)
+  const definedData = stripUndefinedValues(data as object)
+  if (Object.keys(definedData).length === 0)
     throw new Error('Data object must have at least one field to update')
   if (!where) throw new Error('Where condition is required')
 
-  const keys = Object.keys(data)
+  const keys = Object.keys(definedData)
   keys.forEach((key) => assertValidIdentifier(key, 'column name'))
-  const values: any[] = Object.values(data)
+  const values: any[] = Object.values(definedData)
 
   // Generate SET clause with correct placeholders
   const quotedKeys = keys.map((key) =>
@@ -791,28 +796,44 @@ export const updateMany = async <P, R>({
     if (returning && returning.length > 0) {
       query += ` RETURNING ${createSelectFields(returning, dbClient.clientType)}`
     }
+
+    return await dbClient.query<R[]>(query, [...values, ...whereParams])
   }
 
-  const updated = await dbClient.query<R[]>(query, [...values, ...whereParams])
+  // MySQL has no RETURNING, so the rows have to be fetched with a separate
+  // SELECT. That SELECT must capture *which* rows matched before the UPDATE
+  // runs: re-running the original WHERE afterwards (as this used to do)
+  // silently returns the wrong rows whenever the UPDATE changes a column the
+  // WHERE itself filters on — e.g. `where: { status: 'pending' }` with
+  // `data: { status: 'done' }` matches zero rows once every row's status has
+  // already flipped to 'done', so the caller got back `[]` instead of the
+  // rows it just updated.
+  const idColumn = quoteIdentifier('id', dbClient.clientType)
+  const matchedIdRows = await dbClient.query<{ id: string | number }[]>(
+    `SELECT ${idColumn} FROM ${tableName}${whereClause}`,
+    whereParams
+  )
 
-  if (dbClient.clientType === 'mysql') {
-    // For MySQL, we need to fetch the updated records separately
-    // since MySQL doesn't support RETURNING clause
-    const rows = await dbClient.query<R[]>(
-      `SELECT ${
-        returning && returning.length > 0
-          ? createSelectFields(returning, dbClient.clientType)
-          : '*'
-      } FROM ${tableName}
-        ${whereClause}
-      `,
-      whereParams
-    )
-
-    return rows
+  if (matchedIdRows.length === 0) {
+    await dbClient.query<R[]>(query, [...values, ...whereParams])
+    return []
   }
 
-  return updated
+  const ids = matchedIdRows.map((row) => row.id)
+
+  await dbClient.query<R[]>(query, [...values, ...whereParams])
+
+  const idPlaceholders = ids.map(() => '?').join(', ')
+  const rows = await dbClient.query<R[]>(
+    `SELECT ${
+      returning && returning.length > 0
+        ? createSelectFields(returning, dbClient.clientType)
+        : '*'
+    } FROM ${tableName} WHERE ${idColumn} IN (${idPlaceholders})`,
+    ids
+  )
+
+  return rows
 }
 
 /**
@@ -946,7 +967,7 @@ export const deleteMany = async <T>({
  *   unaccent: true,
  * })
  */
-export const joins = async <T>({
+export const joins = async <T, W = T>({
   tableName,
   dbClient,
   select,
@@ -957,7 +978,20 @@ export const joins = async <T>({
   limit,
   offset,
   unaccent,
-}: QueryParams<T>): Promise<T[]> => {
+}: Omit<QueryParams<T>, 'where'> & {
+  /**
+   * `W` (defaults to `T`) is a separate generic from the result row type `T`:
+   * a join's `where` routinely qualifies columns from joined tables (e.g.
+   * `'orders.total'`), which are never keys of `T`. `Conditions<T | W>`'s
+   * `OR`/`AND`/`JOINS` already accept a dotted qualified-column key
+   * structurally (see `QualifiedCondition` in `./types`), so this only
+   * matters when `T` is passed explicitly and a qualified column is needed
+   * at the top level of `where` (not inside `AND`/`OR`/`JOINS`) — pass `W`
+   * explicitly too in that case:
+   * `joins<Row, Row & { 'orders.total'?: unknown }>(...)`.
+   */
+  where?: Conditions<W>
+}): Promise<T[]> => {
   if (!tableName) throw new Error('Table name is required')
   assertValidIdentifier(tableName, 'table name')
   if (!dbClient) throw new Error('DB client is required')
@@ -1003,6 +1037,45 @@ export const joins = async <T>({
   const rows = await dbClient.query<T[]>(queryString, params)
 
   return rows
+}
+
+/**
+ * Error thrown by `rawQuery` when the underlying driver query fails.
+ *
+ * Carries over the original driver error as `cause` plus the common
+ * cross-driver fields consumers actually branch on (e.g. Postgres'
+ * `code: '23505'` for a unique violation, `detail`, `constraint`; mysql2's
+ * `errno`/`sqlState`) — `rawQuery` used to wrap failures in a plain `Error`
+ * built from just `error.message`, which discarded all of this and left
+ * callers with no way to distinguish a conflict from a syntax error.
+ */
+export class RawQueryError extends Error {
+  cause?: unknown
+  code?: string
+  detail?: string
+  constraint?: string
+  errno?: number
+  sqlState?: string
+
+  constructor(message: string, cause: unknown) {
+    super(message)
+    this.name = 'RawQueryError'
+    // Set manually rather than via the ES2022 `Error(message, { cause })`
+    // constructor form, which this project's `lib` target doesn't include.
+    this.cause = cause
+
+    if (cause && typeof cause === 'object') {
+      const driverError = cause as Record<string, unknown>
+      if (typeof driverError.code === 'string') this.code = driverError.code
+      if (typeof driverError.detail === 'string')
+        this.detail = driverError.detail
+      if (typeof driverError.constraint === 'string')
+        this.constraint = driverError.constraint
+      if (typeof driverError.errno === 'number') this.errno = driverError.errno
+      if (typeof driverError.sqlState === 'string')
+        this.sqlState = driverError.sqlState
+    }
+  }
 }
 
 /**
@@ -1053,8 +1126,9 @@ export const rawQuery = async <T = any>({
     const result = await dbClient.query<T>(sql, params)
     return result
   } catch (error) {
-    throw new Error(
-      `Raw query execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    throw new RawQueryError(
+      `Raw query execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      error
     )
   }
 }

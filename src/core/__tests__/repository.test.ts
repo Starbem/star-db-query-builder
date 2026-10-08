@@ -169,11 +169,7 @@ describe('repository', () => {
 
     it('requests one extra row and reports nextCursor when there is a next page', async () => {
       const dbClient = createMockDbClient('pg')
-      dbClient.query.mockResolvedValue([
-        { id: '1' },
-        { id: '2' },
-        { id: '3' },
-      ])
+      dbClient.query.mockResolvedValue([{ id: '1' }, { id: '2' }, { id: '3' }])
 
       const result = await findManyCursor({
         tableName: 'users',
@@ -520,6 +516,39 @@ describe('repository', () => {
       expect(dbClient.query).not.toHaveBeenCalled()
     })
 
+    it('ignores a key whose value is undefined instead of overwriting the column with NULL', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: '123', name: 'John' }])
+
+      await update({
+        tableName: 'users',
+        dbClient,
+        id: '123',
+        // A partial DTO can end up with an explicit `undefined` for a field
+        // the caller didn't mean to touch (e.g. `{ ...partial }` spreading
+        // an object with an optional, unset key) — it must not reach the
+        // query as a real column assignment.
+        data: { name: 'John', email: undefined } as any,
+      })
+
+      const [sql, values] = dbClient.query.mock.calls[0]
+      expect(sql).toBe('UPDATE users SET "name" = $1 WHERE id = $2')
+      expect(values).toEqual(['John', '123'])
+    })
+
+    it('throws when every key in data is undefined, same as an empty data object', async () => {
+      const dbClient = createMockDbClient()
+      await expect(
+        update({
+          tableName: 'users',
+          dbClient,
+          id: '123',
+          data: { email: undefined } as any,
+        })
+      ).rejects.toThrow('Data object must have at least one field to update')
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
     it('parameterizes the id instead of concatenating it into the SQL string (pg)', async () => {
       const dbClient = createMockDbClient('pg')
       dbClient.query.mockResolvedValue([{ id: '123', name: 'John Updated' }])
@@ -612,9 +641,7 @@ describe('repository', () => {
           data: { name: 'x' },
           where: {},
         })
-      ).rejects.toThrow(
-        'refusing to update every row in the table'
-      )
+      ).rejects.toThrow('refusing to update every row in the table')
       expect(dbClient.query).not.toHaveBeenCalled()
     })
 
@@ -658,6 +685,90 @@ describe('repository', () => {
         })
       ).rejects.toThrow('Invalid column name')
       expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('ignores a key whose value is undefined instead of overwriting the column with NULL', async () => {
+      const dbClient = createMockDbClient('pg')
+      dbClient.query.mockResolvedValue([{ id: '1', name: 'John' }])
+
+      await updateMany({
+        tableName: 'users',
+        dbClient,
+        data: { name: 'John', email: undefined } as any,
+        where: { status: { operator: '=', value: 'pending' } },
+      })
+
+      const [sql, values] = dbClient.query.mock.calls[0]
+      expect(sql).toBe('UPDATE users SET "name" = $1 WHERE status = $2')
+      expect(values).toEqual(['John', 'pending'])
+    })
+
+    it('throws when every key in data is undefined, same as an empty data object', async () => {
+      const dbClient = createMockDbClient('pg')
+      await expect(
+        updateMany({
+          tableName: 'users',
+          dbClient,
+          data: { email: undefined } as any,
+          where: { status: { operator: '=', value: 'pending' } },
+        })
+      ).rejects.toThrow('Data object must have at least one field to update')
+      expect(dbClient.query).not.toHaveBeenCalled()
+    })
+
+    it('on MySQL, returns the rows updated even when the WHERE condition targets a column the update itself changes', async () => {
+      const dbClient = createMockDbClient('mysql')
+      // 1st call: pre-update SELECT of matching ids
+      dbClient.query.mockResolvedValueOnce([{ id: '1' }, { id: '2' }])
+      // 2nd call: the UPDATE itself
+      dbClient.query.mockResolvedValueOnce({ affectedRows: 2 })
+      // 3rd call: post-update SELECT by id
+      dbClient.query.mockResolvedValueOnce([
+        { id: '1', status: 'done' },
+        { id: '2', status: 'done' },
+      ])
+
+      const result = await updateMany({
+        tableName: 'orders',
+        dbClient,
+        data: { status: 'done' },
+        where: { status: { operator: '=', value: 'pending' } },
+      })
+
+      expect(result).toEqual([
+        { id: '1', status: 'done' },
+        { id: '2', status: 'done' },
+      ])
+
+      const [selectIdsSql, selectIdsParams] = dbClient.query.mock.calls[0]
+      expect(selectIdsSql).toMatch(/^SELECT `id` FROM orders/)
+      expect(selectIdsParams).toEqual(['pending'])
+
+      const [, updateParams] = dbClient.query.mock.calls[1]
+      expect(updateParams).toEqual(['done', 'pending'])
+
+      // The bug: this used to re-run the *original* WHERE (status = 'pending')
+      // after the UPDATE already changed every matched row's status to
+      // 'done', so it matched zero rows and returned []. Scoping the final
+      // SELECT by the ids captured before the update fixes that.
+      const [finalSelectSql, finalSelectParams] = dbClient.query.mock.calls[2]
+      expect(finalSelectSql).toMatch(/WHERE `id` IN \(\?, \?\)/)
+      expect(finalSelectParams).toEqual(['1', '2'])
+    })
+
+    it('on MySQL, returns an empty array without querying again when no rows match', async () => {
+      const dbClient = createMockDbClient('mysql')
+      dbClient.query.mockResolvedValueOnce([])
+
+      const result = await updateMany({
+        tableName: 'orders',
+        dbClient,
+        data: { status: 'done' },
+        where: { status: { operator: '=', value: 'pending' } },
+      })
+
+      expect(result).toEqual([])
+      expect(dbClient.query).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -826,8 +937,9 @@ describe('repository', () => {
       })
 
       const [sql] = dbClient.query.mock.calls[0]
-      const occurrences = (sql.match(/"updated_at" = EXCLUDED\."updated_at"/g) || [])
-        .length
+      const occurrences = (
+        sql.match(/"updated_at" = EXCLUDED\."updated_at"/g) || []
+      ).length
       expect(occurrences).toBe(1)
     })
 
@@ -951,9 +1063,7 @@ describe('repository', () => {
 
       expect(result).toEqual(rows)
       const [sql, values] = dbClient.query.mock.calls[0]
-      expect(sql).toContain(
-        'INNER JOIN orders ON users.id = orders.user_id'
-      )
+      expect(sql).toContain('INNER JOIN orders ON users.id = orders.user_id')
       expect(sql).toContain('WHERE status = $1')
       expect(values).toEqual(['active'])
     })
@@ -1019,9 +1129,9 @@ describe('repository', () => {
   describe('rawQuery', () => {
     it('throws when sql is missing', async () => {
       const dbClient = createMockDbClient()
-      await expect(
-        rawQuery({ dbClient, sql: '' } as any)
-      ).rejects.toThrow('SQL query is required and must be a string')
+      await expect(rawQuery({ dbClient, sql: '' } as any)).rejects.toThrow(
+        'SQL query is required and must be a string'
+      )
     })
 
     it('executes the raw sql with params', async () => {
@@ -1049,11 +1159,36 @@ describe('repository', () => {
         rawQuery({ dbClient, sql: 'SELECT * FROM users' })
       ).rejects.toThrow('Raw query execution failed: syntax error')
     })
+
+    it('preserves the driver error code/detail and the original error as cause instead of discarding them', async () => {
+      const dbClient = createMockDbClient()
+      const pgError = Object.assign(
+        new Error('duplicate key value violates unique constraint'),
+        { code: '23505', detail: 'Key (email)=(a@b.com) already exists.' }
+      )
+      dbClient.query.mockRejectedValue(pgError)
+
+      let caught: any
+      try {
+        await rawQuery({ dbClient, sql: 'INSERT INTO users ...' })
+      } catch (error) {
+        caught = error
+      }
+
+      expect(caught.code).toBe('23505')
+      expect(caught.detail).toBe('Key (email)=(a@b.com) already exists.')
+      expect(caught.cause).toBe(pgError)
+    })
   })
 
   describe('withTransaction', () => {
     it('commits when the callback succeeds', async () => {
-      const tx = { query: jest.fn(), commit: jest.fn(), rollback: jest.fn() }
+      const tx = {
+        clientType: 'pg' as const,
+        query: jest.fn(),
+        commit: jest.fn(),
+        rollback: jest.fn(),
+      }
       const dbClient = createMockDbClient()
       dbClient.beginTransaction.mockResolvedValue(tx)
 
@@ -1065,7 +1200,12 @@ describe('repository', () => {
     })
 
     it('rolls back and rethrows when the callback fails', async () => {
-      const tx = { query: jest.fn(), commit: jest.fn(), rollback: jest.fn() }
+      const tx = {
+        clientType: 'pg' as const,
+        query: jest.fn(),
+        commit: jest.fn(),
+        rollback: jest.fn(),
+      }
       const dbClient = createMockDbClient()
       dbClient.beginTransaction.mockResolvedValue(tx)
       const error = new Error('boom')
@@ -1083,7 +1223,12 @@ describe('repository', () => {
 
   describe('beginTransaction', () => {
     it('delegates to dbClient.beginTransaction', async () => {
-      const tx = { query: jest.fn(), commit: jest.fn(), rollback: jest.fn() }
+      const tx = {
+        clientType: 'pg' as const,
+        query: jest.fn(),
+        commit: jest.fn(),
+        rollback: jest.fn(),
+      }
       const dbClient = createMockDbClient()
       dbClient.beginTransaction.mockResolvedValue(tx)
 
