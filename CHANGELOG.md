@@ -9,6 +9,8 @@ Entries below are generated from the real commit history for each tagged release
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-08
+
 - `fix`: `Conditions<T>`'s `JOINS`/`AND`/`OR` now accept a table-qualified column key (e.g. `'orders.total'`) alongside `T`'s own keys, instead of rejecting it at compile time — `JOINS` in particular was typed `Conditions<object>` regardless of `T`, which (since `keyof object` is `never`) could never actually hold a qualified-column condition. A plain (unqualified) typo of one of `T`'s own keys is still a compile-time error in all three. Fixes #25.
 - `fix`: `joins<T>()` gains a second, independent generic `W` (`joins<T, W = T>`) decoupling the result row type from the `where` shape, for the case where `T` is passed explicitly and `where` needs a joined table's column at its top level (not inside `AND`/`OR`/`JOINS`).
 - `fix`: an `AND`/`OR`/`JOINS` group element with more than one key (e.g. `{ status: ..., tenant_id: ... }`) no longer silently drops every key past the first — all of a group element's sibling keys are now ANDed together, matching how sibling keys behave at the top level of `where`. Previously a scoping condition placed alongside another key in the same group element (e.g. a `tenant_id` guard) could vanish from the generated SQL with no error.
