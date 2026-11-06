@@ -9,6 +9,8 @@ Entries below are generated from the real commit history for each tagged release
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-06
+
 - `fix`: a PostgreSQL pool no longer crashes the process when an idle connection is dropped (Aurora failover/restart, `pg_terminate_backend`, network reset). `initDb` now attaches a `pool.on('error')` listener that emits the new `MonitorEvents.POOL_ERROR` (`{ clientType, clientName, error }`) instead of letting `pg-pool`'s `'error'` event go unhandled. The same applies to a connection dropped while checked out by a transaction (`inTransaction: true`), since `pg-pool` detaches its own listener while a client is checked out. Fixes #28.
 - `fix`: a failed `COMMIT` no longer releases the connection twice. The transaction client now tracks whether it is closing/finished: a later `rollback()` is a no-op (previously it sent `ROLLBACK` on a connection already returned to the pool, which could belong to another request by then, and the second release threw `Release called on client which has already been released to the pool.`, masking the original error). `withTransaction` always rethrows the error that aborted the transaction; a failing rollback is reported via `MonitorEvents.QUERY_ERROR` (`action: 'rollback'`). Applies to PostgreSQL and MySQL. Fixes #28.
 - `fix`: `commit()`/`rollback()` racing each other (or a query issued after either was called) can no longer both reach the server — previously a `COMMIT` sent after a `ROLLBACK` resolved successfully although the data had been rolled back. Querying or committing a closing/finished transaction throws `transaction already finished`.
