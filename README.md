@@ -125,8 +125,7 @@ The full set of exported functions (`findFirst`, `findMany`, `findManyCursor`, `
 | `type:check` | Type-checks without emitting (`tsc --noEmit`) |
 | `clean` | Removes `dist` and `coverage` |
 | `version:patch` / `version:minor` / `version:major` | Bumps version via `npm version` |
-| `release` | Runs the interactive release helper (`scripts/release.sh`) |
-| `release:patch` / `release:minor` / `release:major` | Bumps version and pushes tags |
+| `release` | Release helper (`scripts/release.sh`): `release prepare <patch\|minor\|major>` opens the release PR, `release tag` tags `main` after it is merged |
 | `prepublishOnly` | Clean, build, and `test:ci`, run automatically before `npm publish` |
 
 ## Testing
@@ -152,4 +151,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the branch naming, commit, and PR c
 
 ## Release Process
 
-See [RELEASE.md](./RELEASE.md) for the full step-by-step. In short: merge to `main`, run the local gate (lint/format/type-check/build/test:ci), update `CHANGELOG.md`, bump the version with `pnpm run version:<patch|minor|major>` (or use the already-bumped `package.json` version), then push the `vX.Y.Z` tag — pushing the tag is what triggers `release.yml` and the npm publish. `scripts/release.sh` wraps the routine steps into one interactive prompt (`pnpm run release`).
+See [RELEASE.md](./RELEASE.md) for the full step-by-step. In short: `main` is protected, so a release goes through a PR. `pnpm run release prepare <patch|minor|major>` runs the local gate, bumps `package.json`, moves the `[Unreleased]` CHANGELOG entries under the new version on a `release/X.Y.Z` branch and opens the PR. Once it is merged, `pnpm run release tag` tags `main`'s HEAD with `vX.Y.Z` and pushes only that tag — pushing the tag is what triggers `release.yml` and the npm publish.

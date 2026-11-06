@@ -75,7 +75,7 @@ Do not use `--no-verify` to skip the pre-commit hook. If it fails, fix the under
 
 **Push only when asked.** Never push without an explicit user instruction, and never force-push to `main` without explicit confirmation.
 
-**Versioning/release:** semver via `npm version` (`version:patch`/`version:minor`/`version:major`), or interactively via `bash scripts/release.sh`. Tags are `vX.Y.Z`. A tag push is what triggers the release workflow (see below) — don't create a `v*` tag casually. Full step-by-step: [RELEASE.md](./RELEASE.md).
+**Versioning/release:** semver, in two phases because `main` is protected (PR, required checks and reviews; no direct push): `pnpm run release prepare <patch|minor|major>` opens a `release/X.Y.Z` PR with the version bump and CHANGELOG, and after it is squash-merged `pnpm run release tag` tags `main`'s HEAD and pushes only that tag. Tags are `vX.Y.Z`. A tag push is what triggers the release workflow (see below) — don't create a `v*` tag casually, never tag before the release PR is merged (a squash merge leaves a tag on the release branch pointing at a commit that is not on `main`), and never `git push --tags`. Full step-by-step: [RELEASE.md](./RELEASE.md).
 
 ## CI/CD
 
