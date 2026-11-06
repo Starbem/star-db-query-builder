@@ -126,9 +126,30 @@ describe('initDb / getDbClient / closeDb', () => {
       expect(Pool).toHaveBeenCalledWith({
         host: 'localhost',
         connectionTimeoutMillis: 10_000,
-        idleTimeoutMillis: 30_000,
       })
+      // pg-pool already closes idle clients after 10s; a longer default
+      // would keep more connections open on the database.
+      expect(DEFAULT_PG_POOL_OPTIONS).not.toHaveProperty('idleTimeoutMillis')
       expect(DEFAULT_PG_POOL_OPTIONS).not.toHaveProperty('statement_timeout')
+      expect(Object.isFrozen(DEFAULT_PG_POOL_OPTIONS)).toBe(true)
+    })
+
+    it('keeps the default when an option is explicitly undefined (e.g. unset env var)', async () => {
+      await initDb({
+        type: 'pg',
+        options: { host: 'localhost', connectionTimeoutMillis: undefined },
+      })
+
+      expect(Pool).toHaveBeenCalledWith({
+        host: 'localhost',
+        connectionTimeoutMillis: 10_000,
+      })
+    })
+
+    it('allows opting out of the connection timeout with 0', async () => {
+      await initDb({ type: 'pg', options: { connectionTimeoutMillis: 0 } })
+
+      expect(Pool).toHaveBeenCalledWith({ connectionTimeoutMillis: 0 })
     })
 
     it('lets explicit pg pool options override the defaults', async () => {

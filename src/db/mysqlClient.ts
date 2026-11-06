@@ -4,7 +4,7 @@ import { IDatabaseClient, ITransactionClient } from './IDatabaseClient'
 import { RetryOptions } from '../core/types'
 import { monitor, MonitorEvents } from '../monitor/monitor'
 import {
-  DEFAULT_RETRY_OPTIONS,
+  resolveRetryOptions,
   shouldRetry,
   toPromiseRetryOptions,
 } from './retryPolicy'
@@ -23,11 +23,11 @@ const transientErrorCodes = new Set([
  * and optional retry options. It sets up monitoring for connection events and query operations.
  *
  * Transient connection errors are retried only for read-only statements,
- * unless `retryOptions.retryWrites` is set (see `shouldRetry`). Without
- * `retryOptions`, `DEFAULT_RETRY_OPTIONS` applies.
+ * unless `retryOptions.retryWrites` is set (see `shouldRetry`). Unset retry
+ * options fall back to `DEFAULT_RETRY_OPTIONS` (see `resolveRetryOptions`).
  *
  * @param pool - The MySQL pool instance
- * @param retryOptions - Optional retry options for failed queries (defaults to `DEFAULT_RETRY_OPTIONS`)
+ * @param retryOptions - Optional retry options for failed queries merged over `DEFAULT_RETRY_OPTIONS`
  * @param queryTimeout - Optional query timeout in milliseconds, applied to every query since mysql2 has no pool-wide timeout option (only a per-query one)
  * @returns IDatabaseClient - The MySQL database client instance
  *
@@ -39,9 +39,11 @@ const transientErrorCodes = new Set([
  */
 export const createMysqlClient = (
   pool: Pool,
-  retryOptions: RetryOptions = DEFAULT_RETRY_OPTIONS,
+  retryOptions?: RetryOptions,
   queryTimeout?: number
 ): IDatabaseClient => {
+  const effectiveRetryOptions = resolveRetryOptions(retryOptions)
+
   monitor.emit(MonitorEvents.CONNECTION_CREATED, {
     clientType: 'mysql',
     poolOptions: pool.config,
@@ -85,7 +87,9 @@ export const createMysqlClient = (
             error,
           })
 
-          if (shouldRetry(error, sql, transientErrorCodes, retryOptions)) {
+          if (
+            shouldRetry(error, sql, transientErrorCodes, effectiveRetryOptions)
+          ) {
             monitor.emit(MonitorEvents.RETRY_ATTEMPT, {
               clientType: 'mysql',
               sql,
@@ -99,7 +103,7 @@ export const createMysqlClient = (
 
           throw error
         }
-      }, toPromiseRetryOptions(retryOptions))
+      }, toPromiseRetryOptions(effectiveRetryOptions))
     },
     beginTransaction: async (): Promise<ITransactionClient> => {
       const connection: PoolConnection = await pool.getConnection()
@@ -112,16 +116,22 @@ export const createMysqlClient = (
         if (finished) return
         finished = true
         if (error) {
-          // The connection may be broken or mid-transaction: never hand it
-          // back to the pool.
+          // The connection may be broken or still mid-transaction (mysql2
+          // doesn't reset a connection on release, and a failed COMMIT doesn't
+          // guarantee the transaction ended): never hand it back to the pool.
           connection.destroy()
         } else {
           connection.release()
         }
       }
 
+      // Set synchronously by commit/rollback, before their first await, so a
+      // commit racing a rollback (or a query issued after either) can't reach
+      // the server once the transaction has started to close.
+      let closing = false
+
       const assertActive = () => {
-        if (finished) {
+        if (closing || finished) {
           throw new Error(
             '@starbemtech/star-db-query-builder: transaction already finished'
           )
@@ -180,6 +190,7 @@ export const createMysqlClient = (
         },
         commit: async (): Promise<void> => {
           assertActive()
+          closing = true
           try {
             await connection.commit()
           } catch (error) {
@@ -191,10 +202,12 @@ export const createMysqlClient = (
             clientType: 'mysql',
           })
         },
-        // No-op once the transaction has finished (committed, rolled back or
-        // failed to commit): the connection is no longer ours to use.
+        // No-op once the transaction is closing or finished (committed,
+        // rolled back or failed to commit): the connection is no longer ours
+        // to use.
         rollback: async (): Promise<void> => {
-          if (finished) return
+          if (closing || finished) return
+          closing = true
           try {
             await connection.rollback()
           } catch (error) {

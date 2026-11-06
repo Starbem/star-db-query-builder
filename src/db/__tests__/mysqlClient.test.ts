@@ -336,6 +336,21 @@ describe('MySqlClient', () => {
         expect(mockConnection.release).toHaveBeenCalledTimes(1)
       })
 
+      it('does not let a commit racing a rollback reach the server', async () => {
+        const client = createMysqlClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        const [rollback, commit] = await Promise.allSettled([
+          transaction.rollback(),
+          transaction.commit(),
+        ])
+
+        expect(rollback.status).toBe('fulfilled')
+        expect(commit.status).toBe('rejected')
+        expect(mockConnection.commit).not.toHaveBeenCalled()
+        expect(mockConnection.release).toHaveBeenCalledTimes(1)
+      })
+
       it('destroys the connection when rollback fails', async () => {
         const rollbackError = new Error('Rollback failed')
         mockConnection.rollback.mockRejectedValue(rollbackError)

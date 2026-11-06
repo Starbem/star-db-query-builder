@@ -183,6 +183,51 @@ describe('PgClient', () => {
       expect(mockPool.query).toHaveBeenCalledTimes(2)
     })
 
+    describe('default retry options', () => {
+      const transientError = Object.assign(new Error('Connection lost'), {
+        code: 'ECONNRESET',
+      })
+
+      beforeEach(() => {
+        jest.useFakeTimers()
+      })
+
+      afterEach(() => {
+        jest.useRealTimers()
+      })
+
+      const runUntilSettled = async (promise: Promise<unknown>) => {
+        const settled = promise.then(
+          () => 'resolved',
+          () => 'rejected'
+        )
+        await jest.runAllTimersAsync()
+        return settled
+      }
+
+      it('gives up a failing read after 2 retries when no retryOptions are given', async () => {
+        mockPool.query.mockRejectedValue(transientError)
+        const client = await createPgClient(mockPool)
+
+        const outcome = await runUntilSettled(client.query('SELECT 1'))
+
+        expect(outcome).toBe('rejected')
+        expect(mockPool.query).toHaveBeenCalledTimes(3)
+      })
+
+      it('stays bounded when only retryWrites is passed', async () => {
+        mockPool.query.mockRejectedValue(transientError)
+        const client = await createPgClient(mockPool, { retryWrites: true })
+
+        const outcome = await runUntilSettled(
+          client.query('UPDATE users SET name = $1', ['John'])
+        )
+
+        expect(outcome).toBe('rejected')
+        expect(mockPool.query).toHaveBeenCalledTimes(3)
+      })
+    })
+
     it('should throw non-transient errors immediately', async () => {
       const permanentError = new Error('Table does not exist')
       ;(permanentError as any).code = 'ER_NO_SUCH_TABLE'
@@ -338,6 +383,88 @@ describe('PgClient', () => {
           'transaction already finished'
         )
         expect(mockClient.release).toHaveBeenCalledTimes(1)
+      })
+
+      it('keeps a healthy client when COMMIT fails with a regular SQL error', async () => {
+        // e.g. a serialization failure under SERIALIZABLE: the server ended
+        // the transaction and the connection is still usable.
+        const serializationError = Object.assign(
+          new Error('could not serialize access'),
+          { code: '40001', severity: 'ERROR' }
+        )
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+          .mockRejectedValueOnce(serializationError) // COMMIT
+
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await expect(transaction.commit()).rejects.toBe(serializationError)
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+        expect(mockClient.release).toHaveBeenCalledWith(undefined)
+      })
+
+      it('destroys the client when COMMIT fails with a FATAL server error', async () => {
+        const terminated = Object.assign(
+          new Error('terminating connection due to administrator command'),
+          { code: '57P01', severity: 'FATAL' }
+        )
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+          .mockRejectedValueOnce(terminated) // COMMIT
+
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await expect(transaction.commit()).rejects.toBe(terminated)
+        expect(mockClient.release).toHaveBeenCalledWith(terminated)
+      })
+
+      it('does not let a commit racing a rollback reach the server', async () => {
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        const [rollback, commit] = await Promise.allSettled([
+          transaction.rollback(),
+          transaction.commit(),
+        ])
+
+        expect(rollback.status).toBe('fulfilled')
+        expect(commit.status).toBe('rejected')
+        expect(mockClient.query).not.toHaveBeenCalledWith('COMMIT')
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+      })
+
+      it('makes a rollback racing a commit a no-op', async () => {
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await Promise.all([transaction.commit(), transaction.rollback()])
+
+        expect(mockClient.query).toHaveBeenCalledWith('COMMIT')
+        expect(mockClient.query).not.toHaveBeenCalledWith('ROLLBACK')
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+      })
+
+      it('reports which client lost its connection mid-transaction', async () => {
+        const connectionError = new Error('Connection terminated unexpectedly')
+        const client = await createPgClient(
+          mockPool,
+          undefined,
+          undefined,
+          false,
+          'primary'
+        )
+        await client.beginTransaction()
+
+        mockClient.emit('error', connectionError)
+
+        expect(monitor.emit).toHaveBeenCalledWith('POOL_ERROR', {
+          clientType: 'pg',
+          clientName: 'primary',
+          error: connectionError,
+          inTransaction: true,
+        })
       })
 
       it('destroys the client when ROLLBACK fails', async () => {

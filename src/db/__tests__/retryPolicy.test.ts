@@ -1,6 +1,7 @@
 import {
   DEFAULT_RETRY_OPTIONS,
   isReadOnlyQuery,
+  resolveRetryOptions,
   shouldRetry,
   toPromiseRetryOptions,
 } from '../retryPolicy'
@@ -13,6 +14,38 @@ describe('retryPolicy', () => {
   describe('DEFAULT_RETRY_OPTIONS', () => {
     it('bounds retries and backoff (promise-retry would default to 10 retries, unbounded)', () => {
       expect(DEFAULT_RETRY_OPTIONS).toEqual({ retries: 2, maxTimeout: 2000 })
+    })
+
+    it('cannot be mutated by a consumer', () => {
+      expect(Object.isFrozen(DEFAULT_RETRY_OPTIONS)).toBe(true)
+    })
+  })
+
+  describe('resolveRetryOptions', () => {
+    it('returns the defaults when nothing is passed', () => {
+      expect(resolveRetryOptions()).toEqual({ retries: 2, maxTimeout: 2000 })
+    })
+
+    it('keeps the bounded defaults when only retryWrites is passed', () => {
+      expect(resolveRetryOptions({ retryWrites: true })).toEqual({
+        retries: 2,
+        maxTimeout: 2000,
+        retryWrites: true,
+      })
+    })
+
+    it('lets explicit values override the defaults', () => {
+      expect(resolveRetryOptions({ retries: 5, maxTimeout: 10_000 })).toEqual({
+        retries: 5,
+        maxTimeout: 10_000,
+      })
+    })
+
+    it('ignores keys explicitly set to undefined', () => {
+      expect(resolveRetryOptions({ retries: undefined })).toEqual({
+        retries: 2,
+        maxTimeout: 2000,
+      })
     })
   })
 
@@ -33,6 +66,11 @@ describe('retryPolicy', () => {
       'DELETE FROM users',
       'WITH moved AS (DELETE FROM a RETURNING *) INSERT INTO b SELECT * FROM moved',
       '/* comment */ SELECT 1',
+      'EXPLAIN ANALYZE DELETE FROM users',
+      'EXPLAIN (ANALYZE, BUFFERS) UPDATE users SET name = $1',
+      'explain analyse insert into users (name) values ($1)',
+      'SELECT * INTO users_backup FROM users',
+      'SELECT id INTO @last_id FROM users LIMIT 1',
       'SELECTED',
       '',
     ])('treats %p as a write', (sql) => {

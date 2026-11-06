@@ -16,18 +16,23 @@ const defaultName = 'default'
 
 /**
  * Pool settings applied to PostgreSQL clients when the caller doesn't set
- * them. `pg`'s own `connectionTimeoutMillis` default is 0 (wait forever for a
- * connection), which pins requests during a database incident instead of
- * failing fast. Any value given in `options` wins.
+ * them (an `undefined` value counts as not set). Any value given in `options`
+ * wins, including `connectionTimeoutMillis: 0` to opt out.
  *
- * `statement_timeout` is intentionally not defaulted: long-running jobs
- * (crons, imports) would start failing on upgrade. Set it per service, based
- * on the real query durations.
+ * `connectionTimeoutMillis`: `pg`'s own default is 0, i.e. wait forever. It
+ * bounds both opening a new connection and waiting in the queue for a free
+ * one when the pool is at `max` — a burst of parallel queries on a saturated
+ * pool now fails with "timeout exceeded when trying to connect" after 10s
+ * (never retried) instead of waiting.
+ *
+ * Not defaulted on purpose: `idleTimeoutMillis` (pg-pool already closes idle
+ * connections after 10s) and `statement_timeout` (long-running jobs such as
+ * crons and imports would start failing on upgrade — set it per service,
+ * based on the real query durations).
  */
-export const DEFAULT_PG_POOL_OPTIONS: Readonly<PoolConfig> = {
+export const DEFAULT_PG_POOL_OPTIONS: Readonly<PoolConfig> = Object.freeze({
   connectionTimeoutMillis: 10_000,
-  idleTimeoutMillis: 30_000,
-}
+})
 
 /**
  * Initialize a database client with the specified configuration
@@ -36,8 +41,8 @@ export const DEFAULT_PG_POOL_OPTIONS: Readonly<PoolConfig> = {
  * @param config - Configuration object for database initialization
  * @param config.name - Optional name for the database client (defaults to 'default')
  * @param config.type - Database type ('pg' for PostgreSQL or 'mysql' for MySQL)
- * @param config.options - Connection options specific to the database type. For PostgreSQL, `connectionTimeoutMillis` and `idleTimeoutMillis` fall back to `DEFAULT_PG_POOL_OPTIONS` when omitted; set `application_name` to identify the service in `pg_stat_activity`
- * @param config.retryOptions - Optional retry configuration for failed queries. Defaults to `DEFAULT_RETRY_OPTIONS` (2 retries, max 2s backoff). Only read-only statements are retried unless `retryWrites: true`
+ * @param config.options - Connection options specific to the database type. For PostgreSQL, `connectionTimeoutMillis` falls back to `DEFAULT_PG_POOL_OPTIONS` when omitted; set `application_name` to identify the service in `pg_stat_activity`
+ * @param config.retryOptions - Optional retry configuration for failed queries. Merged over `DEFAULT_RETRY_OPTIONS` (2 retries, max 2s backoff). Only read-only statements are retried unless `retryWrites: true`
  * @param config.installUnaccentExtension - Optional flag to install unaccent extension (PostgreSQL only)
  * @param config.queryTimeout - Optional query timeout in milliseconds, applied to every query run through this client. For PostgreSQL this maps onto the pool's `query_timeout` (an explicit `query_timeout` in `options` takes precedence). For MySQL, since mysql2 has no pool-wide query timeout, it is passed as the `timeout` option on every individual query.
  * @returns Promise<void> - Resolves when the database client is successfully initialized
@@ -96,7 +101,13 @@ export const initDb = async <T>(config: {
 
   if (config.type === 'pg') {
     const options = config.options as unknown as PoolConfig
-    const poolConfig: PoolConfig = { ...DEFAULT_PG_POOL_OPTIONS, ...options }
+    const definedOptions = Object.fromEntries(
+      Object.entries(options).filter(([, value]) => value !== undefined)
+    )
+    const poolConfig: PoolConfig = {
+      ...DEFAULT_PG_POOL_OPTIONS,
+      ...definedOptions,
+    }
     if (config.queryTimeout && options.query_timeout === undefined) {
       poolConfig.query_timeout = config.queryTimeout
     }
@@ -116,7 +127,8 @@ export const initDb = async <T>(config: {
       pool,
       config.retryOptions,
       poolConfig,
-      config.installUnaccentExtension
+      config.installUnaccentExtension,
+      key
     )
     dbPools[key] = pool
   } else if (config.type === 'mysql') {

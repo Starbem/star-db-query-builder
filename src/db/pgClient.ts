@@ -4,12 +4,27 @@ import { IDatabaseClient, ITransactionClient } from './IDatabaseClient'
 import { RetryOptions } from '../core/types'
 import { monitor, MonitorEvents } from '../monitor/monitor'
 import {
-  DEFAULT_RETRY_OPTIONS,
+  resolveRetryOptions,
   shouldRetry,
   toPromiseRetryOptions,
 } from './retryPolicy'
 
 const transientErrorCodes = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'])
+
+/**
+ * Whether the error is a regular SQL error reported by a server that is still
+ * talking to us (serialization failure, deferred constraint violation, ...),
+ * after which the connection is still usable. A FATAL/PANIC error (e.g.
+ * `pg_terminate_backend`, admin shutdown) or a network error is not.
+ */
+function isRecoverableServerError(error: any): boolean {
+  return (
+    !!error &&
+    typeof error.code === 'string' &&
+    /^[0-9A-Z]{5}$/.test(error.code) &&
+    error.severity === 'ERROR'
+  )
+}
 
 /**
  * Ensures that the unaccent extension is installed in the PostgreSQL database
@@ -59,13 +74,14 @@ async function ensureUnaccentExtension(pool: Pool): Promise<void> {
  * and optional retry options. It sets up monitoring for connection events and query operations.
  *
  * Transient connection errors are retried only for read-only statements,
- * unless `retryOptions.retryWrites` is set (see `shouldRetry`). Without
- * `retryOptions`, `DEFAULT_RETRY_OPTIONS` applies.
+ * unless `retryOptions.retryWrites` is set (see `shouldRetry`). Unset retry
+ * options fall back to `DEFAULT_RETRY_OPTIONS` (see `resolveRetryOptions`).
  *
  * @param pool - The PostgreSQL pool instance
- * @param retryOptions - Optional retry options for failed queries (defaults to `DEFAULT_RETRY_OPTIONS`)
+ * @param retryOptions - Optional retry options for failed queries, merged over `DEFAULT_RETRY_OPTIONS`
  * @param poolConfig - Optional pool configuration
  * @param installUnaccentExtension - Optional flag to install unaccent extension
+ * @param clientName - Optional registry name of the client, reported on `POOL_ERROR`
  * @returns IDatabaseClient - The PostgreSQL database client instance
  *
  * @example
@@ -79,10 +95,13 @@ async function ensureUnaccentExtension(pool: Pool): Promise<void> {
  */
 export const createPgClient = async (
   pool: Pool,
-  retryOptions: RetryOptions = DEFAULT_RETRY_OPTIONS,
+  retryOptions?: RetryOptions,
   poolConfig?: PoolConfig,
-  installUnaccentExtension?: boolean
+  installUnaccentExtension?: boolean,
+  clientName?: string
 ): Promise<IDatabaseClient> => {
+  const effectiveRetryOptions = resolveRetryOptions(retryOptions)
+
   if (installUnaccentExtension) {
     await ensureUnaccentExtension(pool)
   }
@@ -128,7 +147,9 @@ export const createPgClient = async (
             error,
           })
 
-          if (shouldRetry(error, sql, transientErrorCodes, retryOptions)) {
+          if (
+            shouldRetry(error, sql, transientErrorCodes, effectiveRetryOptions)
+          ) {
             monitor.emit(MonitorEvents.RETRY_ATTEMPT, {
               clientType: 'pg',
               sql,
@@ -142,7 +163,7 @@ export const createPgClient = async (
 
           throw error
         }
-      }, toPromiseRetryOptions(retryOptions))
+      }, toPromiseRetryOptions(effectiveRetryOptions))
     },
     beginTransaction: async (): Promise<ITransactionClient> => {
       const client: PoolClient = await pool.connect()
@@ -156,6 +177,7 @@ export const createPgClient = async (
         connectionError = error
         monitor.emit(MonitorEvents.POOL_ERROR, {
           clientType: 'pg',
+          clientName,
           error,
           inTransaction: true,
         })
@@ -171,12 +193,24 @@ export const createPgClient = async (
         finished = true
         client.removeListener('error', onClientError)
         // A truthy argument makes pg-pool destroy the client instead of
-        // returning a possibly broken connection to the pool.
-        client.release((error as Error | undefined) ?? connectionError)
+        // returning it to the pool. Only do that when the connection itself
+        // may be broken: a plain SQL error (e.g. a serialization failure on
+        // COMMIT) leaves it usable, and destroying it would force a reconnect.
+        const destroyReason =
+          connectionError ??
+          (error && !isRecoverableServerError(error)
+            ? (error as Error)
+            : undefined)
+        client.release(destroyReason)
       }
 
+      // Set synchronously by commit/rollback, before their first await, so a
+      // commit racing a rollback (or a query issued after either) can't reach
+      // the server once the transaction has started to close.
+      let closing = false
+
       const assertActive = () => {
-        if (finished) {
+        if (closing || finished) {
           throw new Error(
             '@starbemtech/star-db-query-builder: transaction already finished'
           )
@@ -233,6 +267,7 @@ export const createPgClient = async (
         },
         commit: async (): Promise<void> => {
           assertActive()
+          closing = true
           try {
             await client.query('COMMIT')
           } catch (error) {
@@ -244,11 +279,13 @@ export const createPgClient = async (
             clientType: 'pg',
           })
         },
-        // No-op once the transaction has finished (committed, rolled back or
-        // failed to commit): the connection is no longer ours to send
-        // ROLLBACK on, and a failed COMMIT already ended the transaction.
+        // No-op once the transaction is closing or finished (committed,
+        // rolled back or failed to commit): the connection is no longer ours
+        // to send ROLLBACK on, and a failed COMMIT already ended the
+        // transaction.
         rollback: async (): Promise<void> => {
-          if (finished) return
+          if (closing || finished) return
+          closing = true
           try {
             await client.query('ROLLBACK')
           } catch (error) {
