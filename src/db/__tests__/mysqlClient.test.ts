@@ -19,6 +19,7 @@ jest.mock('../../monitor/monitor', () => ({
     RETRY_ATTEMPT: 'RETRY_ATTEMPT',
     TRANSACTION_COMMIT: 'TRANSACTION_COMMIT',
     TRANSACTION_ROLLBACK: 'TRANSACTION_ROLLBACK',
+    POOL_ERROR: 'POOL_ERROR',
   },
 }))
 
@@ -169,6 +170,34 @@ describe('MySqlClient', () => {
       expect(result).toEqual(mockRows)
     })
 
+    it('does not retry a write after a transient error mid-query', async () => {
+      const transientError = new Error('Connection lost')
+      ;(transientError as any).code = 'PROTOCOL_CONNECTION_LOST'
+      mockPool.execute.mockRejectedValue(transientError)
+      const client = createMysqlClient(mockPool, { retries: 3, minTimeout: 1 })
+
+      await expect(
+        client.query('UPDATE users SET name = ? WHERE id = ?', ['John', 1])
+      ).rejects.toBe(transientError)
+      expect(mockPool.execute).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries a write when retryWrites is enabled', async () => {
+      const transientError = new Error('Connection lost')
+      ;(transientError as any).code = 'ECONNRESET'
+      mockPool.execute
+        .mockRejectedValueOnce(transientError)
+        .mockResolvedValueOnce([{ affectedRows: 1 }, []] as any)
+      const client = createMysqlClient(mockPool, {
+        retries: 3,
+        minTimeout: 1,
+        retryWrites: true,
+      })
+
+      await client.query('UPDATE users SET name = ? WHERE id = ?', ['John', 1])
+      expect(mockPool.execute).toHaveBeenCalledTimes(2)
+    })
+
     it('should throw non-transient errors immediately', async () => {
       const permanentError = new Error('Table does not exist')
       ;(permanentError as any).code = 'ER_NO_SUCH_TABLE'
@@ -200,6 +229,7 @@ describe('MySqlClient', () => {
           commit: jest.fn(),
           rollback: jest.fn(),
           release: jest.fn(),
+          destroy: jest.fn(),
         }
         mockPool.getConnection.mockResolvedValue(mockConnection)
       })
@@ -269,18 +299,59 @@ describe('MySqlClient', () => {
         expect(mockConnection.release).toHaveBeenCalled()
       })
 
-      it('should release connection even if commit fails', async () => {
+      it('destroys the connection and propagates the original error when commit fails', async () => {
         const commitError = new Error('Commit failed')
         mockConnection.commit.mockRejectedValue(commitError)
 
         const client = createMysqlClient(mockPool)
         const transaction = await client.beginTransaction()
 
-        await expect(transaction.commit()).rejects.toThrow('Commit failed')
-        expect(mockConnection.release).toHaveBeenCalled()
+        await expect(transaction.commit()).rejects.toBe(commitError)
+        expect(mockConnection.destroy).toHaveBeenCalledTimes(1)
+        expect(mockConnection.release).not.toHaveBeenCalled()
       })
 
-      it('should release connection even if rollback fails', async () => {
+      it('makes rollback a no-op after a failed commit (no rollback on a released connection)', async () => {
+        mockConnection.commit.mockRejectedValue(new Error('Commit failed'))
+
+        const client = createMysqlClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await expect(transaction.commit()).rejects.toThrow('Commit failed')
+        await expect(transaction.rollback()).resolves.toBeUndefined()
+
+        expect(mockConnection.rollback).not.toHaveBeenCalled()
+        expect(mockConnection.destroy).toHaveBeenCalledTimes(1)
+      })
+
+      it('rejects queries once the transaction has finished', async () => {
+        const client = createMysqlClient(mockPool)
+        const transaction = await client.beginTransaction()
+        await transaction.commit()
+
+        await expect(transaction.query('SELECT 1')).rejects.toThrow(
+          'transaction already finished'
+        )
+        expect(mockConnection.execute).not.toHaveBeenCalled()
+        expect(mockConnection.release).toHaveBeenCalledTimes(1)
+      })
+
+      it('does not let a commit racing a rollback reach the server', async () => {
+        const client = createMysqlClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        const [rollback, commit] = await Promise.allSettled([
+          transaction.rollback(),
+          transaction.commit(),
+        ])
+
+        expect(rollback.status).toBe('fulfilled')
+        expect(commit.status).toBe('rejected')
+        expect(mockConnection.commit).not.toHaveBeenCalled()
+        expect(mockConnection.release).toHaveBeenCalledTimes(1)
+      })
+
+      it('destroys the connection when rollback fails', async () => {
         const rollbackError = new Error('Rollback failed')
         mockConnection.rollback.mockRejectedValue(rollbackError)
 
@@ -288,10 +359,11 @@ describe('MySqlClient', () => {
         const transaction = await client.beginTransaction()
 
         await expect(transaction.rollback()).rejects.toThrow('Rollback failed')
-        expect(mockConnection.release).toHaveBeenCalled()
+        expect(mockConnection.destroy).toHaveBeenCalledTimes(1)
+        expect(mockConnection.release).not.toHaveBeenCalled()
       })
 
-      it('should release connection if beginTransaction fails', async () => {
+      it('destroys the connection if beginTransaction fails', async () => {
         const beginError = new Error('Begin transaction failed')
         mockConnection.beginTransaction.mockRejectedValue(beginError)
 
@@ -300,7 +372,8 @@ describe('MySqlClient', () => {
         await expect(client.beginTransaction()).rejects.toThrow(
           'Begin transaction failed'
         )
-        expect(mockConnection.release).toHaveBeenCalled()
+        expect(mockConnection.destroy).toHaveBeenCalledTimes(1)
+        expect(mockConnection.release).not.toHaveBeenCalled()
       })
     })
   })

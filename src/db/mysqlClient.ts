@@ -3,6 +3,11 @@ import promiseRetry from 'promise-retry'
 import { IDatabaseClient, ITransactionClient } from './IDatabaseClient'
 import { RetryOptions } from '../core/types'
 import { monitor, MonitorEvents } from '../monitor/monitor'
+import {
+  resolveRetryOptions,
+  shouldRetry,
+  toPromiseRetryOptions,
+} from './retryPolicy'
 
 const transientErrorCodes = new Set([
   'ECONNRESET',
@@ -12,40 +17,17 @@ const transientErrorCodes = new Set([
 ])
 
 /**
- * Checks if the given error is a transient error that can be retried
- *
- * Transient errors are temporary network or connection issues that typically
- * resolve themselves and can be safely retried. This function checks if the
- * error code matches known transient error patterns for MySQL connections.
- *
- * @param error - The error object to check
- * @returns boolean - True if the error is transient and can be retried, false otherwise
- *
- * @example
- * try {
- *   const result = await pool.execute(sql, params);
- * } catch (error) {
- *   if (isTransientError(error)) {
- *     // Retry the operation
- *     console.log('Transient error detected, retrying...');
- *   } else {
- *     // Handle permanent error
- *     throw error;
- *   }
- * }
- */
-function isTransientError(error: any): boolean {
-  return error && error.code && transientErrorCodes.has(error.code)
-}
-
-/**
  * Creates a MySQL database client
  *
  * This function initializes a MySQL database client with the provided pool configuration
  * and optional retry options. It sets up monitoring for connection events and query operations.
  *
+ * Transient connection errors are retried only for read-only statements,
+ * unless `retryOptions.retryWrites` is set (see `shouldRetry`). Unset retry
+ * options fall back to `DEFAULT_RETRY_OPTIONS` (see `resolveRetryOptions`).
+ *
  * @param pool - The MySQL pool instance
- * @param retryOptions - Optional retry options for failed queries
+ * @param retryOptions - Optional retry options for failed queries merged over `DEFAULT_RETRY_OPTIONS`
  * @param queryTimeout - Optional query timeout in milliseconds, applied to every query since mysql2 has no pool-wide timeout option (only a per-query one)
  * @returns IDatabaseClient - The MySQL database client instance
  *
@@ -60,6 +42,8 @@ export const createMysqlClient = (
   retryOptions?: RetryOptions,
   queryTimeout?: number
 ): IDatabaseClient => {
+  const effectiveRetryOptions = resolveRetryOptions(retryOptions)
+
   monitor.emit(MonitorEvents.CONNECTION_CREATED, {
     clientType: 'mysql',
     poolOptions: pool.config,
@@ -103,7 +87,9 @@ export const createMysqlClient = (
             error,
           })
 
-          if (isTransientError(error)) {
+          if (
+            shouldRetry(error, sql, transientErrorCodes, effectiveRetryOptions)
+          ) {
             monitor.emit(MonitorEvents.RETRY_ATTEMPT, {
               clientType: 'mysql',
               sql,
@@ -117,83 +103,122 @@ export const createMysqlClient = (
 
           throw error
         }
-      }, retryOptions)
+      }, toPromiseRetryOptions(effectiveRetryOptions))
     },
     beginTransaction: async (): Promise<ITransactionClient> => {
       const connection: PoolConnection = await pool.getConnection()
 
+      // Releasing twice, or sending a late ROLLBACK on a connection that is
+      // already back in the pool, can touch another caller's work. Every exit
+      // path goes through here exactly once.
+      let finished = false
+      const finish = (error?: unknown) => {
+        if (finished) return
+        finished = true
+        if (error) {
+          // The connection may be broken or still mid-transaction (mysql2
+          // doesn't reset a connection on release, and a failed COMMIT doesn't
+          // guarantee the transaction ended): never hand it back to the pool.
+          connection.destroy()
+        } else {
+          connection.release()
+        }
+      }
+
+      // Set synchronously by commit/rollback, before their first await, so a
+      // commit racing a rollback (or a query issued after either) can't reach
+      // the server once the transaction has started to close.
+      let closing = false
+
+      const assertActive = () => {
+        if (closing || finished) {
+          throw new Error(
+            '@starbemtech/star-db-query-builder: transaction already finished'
+          )
+        }
+      }
+
       try {
         await connection.beginTransaction()
-
-        return {
-          clientType: 'mysql',
-          query: async <T>(sql: string, params?: any[]): Promise<T> => {
-            const startTime = Date.now()
-            try {
-              monitor.emit(MonitorEvents.QUERY_START, {
-                clientType: 'mysql',
-                sql,
-                params,
-                attempt: 1,
-                inTransaction: true,
-              })
-
-              const [rows] = queryTimeout
-                ? await connection.execute(
-                    { sql, timeout: queryTimeout },
-                    params
-                  )
-                : await connection.execute(sql, params)
-
-              const elapsedTime = Date.now() - startTime
-              monitor.emit(MonitorEvents.QUERY_END, {
-                clientType: 'mysql',
-                sql,
-                params,
-                attempt: 1,
-                elapsedTime,
-                inTransaction: true,
-              })
-
-              return rows as unknown as T
-            } catch (error) {
-              const elapsedTime = Date.now() - startTime
-              monitor.emit(MonitorEvents.QUERY_ERROR, {
-                clientType: 'mysql',
-                sql,
-                params,
-                attempt: 1,
-                elapsedTime,
-                error,
-                inTransaction: true,
-              })
-              throw error
-            }
-          },
-          commit: async (): Promise<void> => {
-            try {
-              await connection.commit()
-              monitor.emit(MonitorEvents.TRANSACTION_COMMIT, {
-                clientType: 'mysql',
-              })
-            } finally {
-              connection.release()
-            }
-          },
-          rollback: async (): Promise<void> => {
-            try {
-              await connection.rollback()
-              monitor.emit(MonitorEvents.TRANSACTION_ROLLBACK, {
-                clientType: 'mysql',
-              })
-            } finally {
-              connection.release()
-            }
-          },
-        }
       } catch (error) {
-        connection.release()
+        finish(error)
         throw error
+      }
+
+      return {
+        clientType: 'mysql',
+        query: async <T>(sql: string, params?: any[]): Promise<T> => {
+          assertActive()
+          const startTime = Date.now()
+          try {
+            monitor.emit(MonitorEvents.QUERY_START, {
+              clientType: 'mysql',
+              sql,
+              params,
+              attempt: 1,
+              inTransaction: true,
+            })
+
+            const [rows] = queryTimeout
+              ? await connection.execute({ sql, timeout: queryTimeout }, params)
+              : await connection.execute(sql, params)
+
+            const elapsedTime = Date.now() - startTime
+            monitor.emit(MonitorEvents.QUERY_END, {
+              clientType: 'mysql',
+              sql,
+              params,
+              attempt: 1,
+              elapsedTime,
+              inTransaction: true,
+            })
+
+            return rows as unknown as T
+          } catch (error) {
+            const elapsedTime = Date.now() - startTime
+            monitor.emit(MonitorEvents.QUERY_ERROR, {
+              clientType: 'mysql',
+              sql,
+              params,
+              attempt: 1,
+              elapsedTime,
+              error,
+              inTransaction: true,
+            })
+            throw error
+          }
+        },
+        commit: async (): Promise<void> => {
+          assertActive()
+          closing = true
+          try {
+            await connection.commit()
+          } catch (error) {
+            finish(error)
+            throw error
+          }
+          finish()
+          monitor.emit(MonitorEvents.TRANSACTION_COMMIT, {
+            clientType: 'mysql',
+          })
+        },
+        // No-op once the transaction is closing or finished (committed,
+        // rolled back or failed to commit): the connection is no longer ours
+        // to use.
+        rollback: async (): Promise<void> => {
+          if (closing || finished) return
+          closing = true
+          try {
+            await connection.rollback()
+          } catch (error) {
+            finish(error)
+            throw error
+          }
+          finish()
+          monitor.emit(MonitorEvents.TRANSACTION_ROLLBACK, {
+            clientType: 'mysql',
+          })
+        },
       }
     },
   }

@@ -5,8 +5,11 @@ import {
   closeDb,
   closeAllDbClients,
   resetDbClients,
+  DEFAULT_PG_POOL_OPTIONS,
 } from '../initDb'
+import { EventEmitter } from 'events'
 import { Pool } from 'pg'
+import { monitor } from '../../monitor/monitor'
 import { createPool as createMySqlPool } from 'mysql2/promise'
 
 jest.mock('pg', () => ({
@@ -29,6 +32,7 @@ jest.mock('../../monitor/monitor', () => ({
     RETRY_ATTEMPT: 'RETRY_ATTEMPT',
     TRANSACTION_COMMIT: 'TRANSACTION_COMMIT',
     TRANSACTION_ROLLBACK: 'TRANSACTION_ROLLBACK',
+    POOL_ERROR: 'POOL_ERROR',
   },
 }))
 
@@ -37,11 +41,12 @@ describe('initDb / getDbClient / closeDb', () => {
   let mockMysqlPool: any
 
   beforeEach(() => {
-    mockPgPool = {
+    // A real emitter, so tests can fire the pool's 'error' event.
+    mockPgPool = Object.assign(new EventEmitter(), {
       query: jest.fn(),
       connect: jest.fn(),
       end: jest.fn().mockResolvedValue(undefined),
-    }
+    })
     mockMysqlPool = {
       execute: jest.fn(),
       getConnection: jest.fn(),
@@ -113,6 +118,71 @@ describe('initDb / getDbClient / closeDb', () => {
       expect(Pool).toHaveBeenCalledWith(
         expect.objectContaining({ query_timeout: 9000 })
       )
+    })
+
+    it('applies safe pg pool defaults when they are not set', async () => {
+      await initDb({ type: 'pg', options: { host: 'localhost' } })
+
+      expect(Pool).toHaveBeenCalledWith({
+        host: 'localhost',
+        connectionTimeoutMillis: 10_000,
+      })
+      // pg-pool already closes idle clients after 10s; a longer default
+      // would keep more connections open on the database.
+      expect(DEFAULT_PG_POOL_OPTIONS).not.toHaveProperty('idleTimeoutMillis')
+      expect(DEFAULT_PG_POOL_OPTIONS).not.toHaveProperty('statement_timeout')
+      expect(Object.isFrozen(DEFAULT_PG_POOL_OPTIONS)).toBe(true)
+    })
+
+    it('keeps the default when an option is explicitly undefined (e.g. unset env var)', async () => {
+      await initDb({
+        type: 'pg',
+        options: { host: 'localhost', connectionTimeoutMillis: undefined },
+      })
+
+      expect(Pool).toHaveBeenCalledWith({
+        host: 'localhost',
+        connectionTimeoutMillis: 10_000,
+      })
+    })
+
+    it('allows opting out of the connection timeout with 0', async () => {
+      await initDb({ type: 'pg', options: { connectionTimeoutMillis: 0 } })
+
+      expect(Pool).toHaveBeenCalledWith({ connectionTimeoutMillis: 0 })
+    })
+
+    it('lets explicit pg pool options override the defaults', async () => {
+      await initDb({
+        type: 'pg',
+        options: {
+          connectionTimeoutMillis: 2_000,
+          idleTimeoutMillis: 5_000,
+          application_name: 'accounts-ms:accounts',
+        },
+      })
+
+      expect(Pool).toHaveBeenCalledWith({
+        connectionTimeoutMillis: 2_000,
+        idleTimeoutMillis: 5_000,
+        application_name: 'accounts-ms:accounts',
+      })
+    })
+
+    it('reports an idle pg client error instead of crashing the process', async () => {
+      const error = new Error(
+        'terminating connection due to administrator command'
+      )
+      await initDb({ name: 'primary', type: 'pg', options: {} })
+
+      // Without a listener, EventEmitter throws on an 'error' event — which
+      // is what took the process down on a failover.
+      expect(() => mockPgPool.emit('error', error, {})).not.toThrow()
+      expect(monitor.emit).toHaveBeenCalledWith('POOL_ERROR', {
+        clientType: 'pg',
+        clientName: 'primary',
+        error,
+      })
     })
 
     it('passes queryTimeout through so every mysql query uses it', async () => {
