@@ -1,5 +1,7 @@
+import { EventEmitter } from 'events'
 import { createPgClient } from '../pgClient'
 import { Pool } from 'pg'
+import { monitor } from '../../monitor/monitor'
 
 // Mock pg module
 jest.mock('pg', () => ({
@@ -19,6 +21,7 @@ jest.mock('../../monitor/monitor', () => ({
     RETRY_ATTEMPT: 'RETRY_ATTEMPT',
     TRANSACTION_COMMIT: 'TRANSACTION_COMMIT',
     TRANSACTION_ROLLBACK: 'TRANSACTION_ROLLBACK',
+    POOL_ERROR: 'POOL_ERROR',
   },
 }))
 
@@ -134,6 +137,52 @@ describe('PgClient', () => {
       expect(result).toEqual(mockRows)
     })
 
+    it('does not retry a write after a transient error mid-query', async () => {
+      const transientError = new Error('Connection lost')
+      ;(transientError as any).code = 'ECONNRESET'
+      mockPool.query.mockRejectedValue(transientError)
+      const client = await createPgClient(mockPool, {
+        retries: 3,
+        minTimeout: 1,
+      })
+
+      await expect(
+        client.query('INSERT INTO users (name) VALUES ($1)', ['John'])
+      ).rejects.toBe(transientError)
+      expect(mockPool.query).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries a write when retryWrites is enabled', async () => {
+      const transientError = new Error('Connection lost')
+      ;(transientError as any).code = 'ECONNRESET'
+      mockPool.query
+        .mockRejectedValueOnce(transientError)
+        .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 } as any)
+      const client = await createPgClient(mockPool, {
+        retries: 3,
+        minTimeout: 1,
+        retryWrites: true,
+      })
+
+      await client.query('INSERT INTO users (name) VALUES ($1)', ['John'])
+      expect(mockPool.query).toHaveBeenCalledTimes(2)
+    })
+
+    it('retries a write refused before it reached the server', async () => {
+      const refusedError = new Error('connect ECONNREFUSED')
+      ;(refusedError as any).code = 'ECONNREFUSED'
+      mockPool.query
+        .mockRejectedValueOnce(refusedError)
+        .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 } as any)
+      const client = await createPgClient(mockPool, {
+        retries: 3,
+        minTimeout: 1,
+      })
+
+      await client.query('INSERT INTO users (name) VALUES ($1)', ['John'])
+      expect(mockPool.query).toHaveBeenCalledTimes(2)
+    })
+
     it('should throw non-transient errors immediately', async () => {
       const permanentError = new Error('Table does not exist')
       ;(permanentError as any).code = 'ER_NO_SUCH_TABLE'
@@ -172,10 +221,12 @@ describe('PgClient', () => {
       let mockClient: any
 
       beforeEach(() => {
-        mockClient = {
+        // A real emitter, so tests can simulate the connection dropping
+        // while the client is checked out.
+        mockClient = Object.assign(new EventEmitter(), {
           query: jest.fn(),
           release: jest.fn(),
-        }
+        })
         mockPool.connect.mockResolvedValue(mockClient)
       })
 
@@ -230,7 +281,7 @@ describe('PgClient', () => {
         expect(mockClient.release).toHaveBeenCalled()
       })
 
-      it('should release connection even if commit fails', async () => {
+      it('destroys the client and propagates the original error when COMMIT fails', async () => {
         const commitError = new Error('Commit failed')
 
         // Mock the sequence: BEGIN succeeds, COMMIT fails
@@ -241,11 +292,55 @@ describe('PgClient', () => {
         const client = await createPgClient(mockPool)
         const transaction = await client.beginTransaction()
 
-        await expect(transaction.commit()).rejects.toThrow('Commit failed')
-        expect(mockClient.release).toHaveBeenCalled()
+        await expect(transaction.commit()).rejects.toBe(commitError)
+        // A truthy argument makes pg-pool drop the client instead of
+        // returning a possibly broken connection to the pool.
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+        expect(mockClient.release).toHaveBeenCalledWith(commitError)
       })
 
-      it('should release connection even if rollback fails', async () => {
+      it('makes rollback a no-op after a failed COMMIT (no double release, no ROLLBACK on a released client)', async () => {
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+          .mockRejectedValueOnce(new Error('Commit failed')) // COMMIT
+
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await expect(transaction.commit()).rejects.toThrow('Commit failed')
+        await expect(transaction.rollback()).resolves.toBeUndefined()
+
+        expect(mockClient.query).not.toHaveBeenCalledWith('ROLLBACK')
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+      })
+
+      it('makes rollback a no-op after a successful commit', async () => {
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        await transaction.commit()
+        await transaction.rollback()
+
+        expect(mockClient.query).not.toHaveBeenCalledWith('ROLLBACK')
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+        expect(mockClient.release).toHaveBeenCalledWith(undefined)
+      })
+
+      it('rejects queries and commit once the transaction has finished', async () => {
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+        await transaction.commit()
+
+        await expect(transaction.query('SELECT 1')).rejects.toThrow(
+          'transaction already finished'
+        )
+        await expect(transaction.commit()).rejects.toThrow(
+          'transaction already finished'
+        )
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+      })
+
+      it('destroys the client when ROLLBACK fails', async () => {
         const rollbackError = new Error('Rollback failed')
 
         // Mock the sequence: BEGIN succeeds, ROLLBACK fails
@@ -257,7 +352,28 @@ describe('PgClient', () => {
         const transaction = await client.beginTransaction()
 
         await expect(transaction.rollback()).rejects.toThrow('Rollback failed')
-        expect(mockClient.release).toHaveBeenCalled()
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+        expect(mockClient.release).toHaveBeenCalledWith(rollbackError)
+      })
+
+      it('does not crash when the connection drops while the client is checked out', async () => {
+        const connectionError = new Error('terminating connection')
+        const client = await createPgClient(mockPool)
+        const transaction = await client.beginTransaction()
+
+        // Without a listener, EventEmitter throws on an 'error' event.
+        expect(() => mockClient.emit('error', connectionError)).not.toThrow()
+        expect(monitor.emit).toHaveBeenCalledWith('POOL_ERROR', {
+          clientType: 'pg',
+          error: connectionError,
+          inTransaction: true,
+        })
+
+        // ROLLBACK on the dead connection: the client must not go back to
+        // the pool as if it were healthy.
+        await transaction.rollback()
+        expect(mockClient.release).toHaveBeenCalledWith(connectionError)
+        expect(mockClient.listenerCount('error')).toBe(0)
       })
 
       it('should release connection if BEGIN fails', async () => {
@@ -269,7 +385,8 @@ describe('PgClient', () => {
         await expect(client.beginTransaction()).rejects.toThrow(
           'Begin transaction failed'
         )
-        expect(mockClient.release).toHaveBeenCalled()
+        expect(mockClient.release).toHaveBeenCalledTimes(1)
+        expect(mockClient.release).toHaveBeenCalledWith(beginError)
       })
     })
   })

@@ -4,6 +4,7 @@ import { Conditions as TypeConditions } from './src/core/types'
 
 // Configs
 export * from './src/db/initDb'
+export { DEFAULT_RETRY_OPTIONS, isReadOnlyQuery } from './src/db/retryPolicy'
 
 // Generic Repository
 export * from './src/core/repository'

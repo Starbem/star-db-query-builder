@@ -15,6 +15,7 @@ import {
   beginTransaction,
 } from '../repository'
 import { IDatabaseClient } from '../../db/IDatabaseClient'
+import { monitor, MonitorEvents } from '../../monitor/monitor'
 
 jest.mock('uuid', () => ({
   v4: jest.fn(() => 'generated-uuid'),
@@ -1218,6 +1219,38 @@ describe('repository', () => {
 
       expect(tx.rollback).toHaveBeenCalled()
       expect(tx.commit).not.toHaveBeenCalled()
+    })
+
+    it('propagates the original COMMIT error, not a rollback failure', async () => {
+      const commitError = new Error('commit failed')
+      const tx = {
+        clientType: 'pg' as const,
+        query: jest.fn(),
+        commit: jest.fn().mockRejectedValue(commitError),
+        rollback: jest
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'Release called on client which has already been released to the pool.'
+            )
+          ),
+      }
+      const dbClient = createMockDbClient()
+      dbClient.beginTransaction.mockResolvedValue(tx)
+      const listener = jest.fn()
+      monitor.on(MonitorEvents.QUERY_ERROR, listener)
+
+      try {
+        await expect(withTransaction(dbClient, async () => 'ok')).rejects.toBe(
+          commitError
+        )
+      } finally {
+        monitor.removeListener(MonitorEvents.QUERY_ERROR, listener)
+      }
+
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'rollback', inTransaction: true })
+      )
     })
   })
 

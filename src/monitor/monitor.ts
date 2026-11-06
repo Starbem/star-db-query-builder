@@ -11,6 +11,7 @@ export enum MonitorEvents {
   RETRY_ATTEMPT = 'retry_attempt',
   TRANSACTION_COMMIT = 'transaction_commit',
   TRANSACTION_ROLLBACK = 'transaction_rollback',
+  POOL_ERROR = 'pool_error',
 }
 
 export const monitor = new EventEmitter()

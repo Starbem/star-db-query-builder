@@ -7,6 +7,7 @@ import {
   Conditions,
 } from './types'
 import { IDatabaseClient, ITransactionClient } from '../db/IDatabaseClient'
+import { monitor, MonitorEvents } from '../monitor/monitor'
 import {
   createGroupByClause,
   createLimitClause,
@@ -1245,7 +1246,19 @@ export const withTransaction = async <T>(
     await transaction.commit()
     return result
   } catch (error) {
-    await transaction.rollback()
+    // After a failed COMMIT this is a no-op (the client already ended the
+    // transaction). A failing ROLLBACK is reported but never replaces the
+    // error that actually aborted the transaction.
+    try {
+      await transaction.rollback()
+    } catch (rollbackError) {
+      monitor.emit(MonitorEvents.QUERY_ERROR, {
+        clientType: transaction.clientType,
+        action: 'rollback',
+        error: rollbackError,
+        inTransaction: true,
+      })
+    }
     throw error
   }
 }

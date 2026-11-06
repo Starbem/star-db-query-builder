@@ -6,6 +6,14 @@ export interface RetryOptions {
   minTimeout?: number
   maxTimeout?: number
   randomize?: boolean
+  /**
+   * Also retry writes (anything that is not a plain `SELECT`/`SHOW`/`EXPLAIN`)
+   * after a transient connection error. Off by default: when the connection
+   * drops mid-query it is unknown whether the write was applied, so a retry
+   * can duplicate it. Only enable it when every write through the client is
+   * idempotent.
+   */
+  retryWrites?: boolean
 }
 
 export interface QueryExec {

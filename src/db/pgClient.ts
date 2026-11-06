@@ -3,35 +3,13 @@ import promiseRetry from 'promise-retry'
 import { IDatabaseClient, ITransactionClient } from './IDatabaseClient'
 import { RetryOptions } from '../core/types'
 import { monitor, MonitorEvents } from '../monitor/monitor'
+import {
+  DEFAULT_RETRY_OPTIONS,
+  shouldRetry,
+  toPromiseRetryOptions,
+} from './retryPolicy'
 
 const transientErrorCodes = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED'])
-
-/**
- * Checks if the given error is a transient error that can be retried
- *
- * Transient errors are temporary network or connection issues that typically
- * resolve themselves and can be safely retried. This function checks if the
- * error code matches known transient error patterns for PostgreSQL connections.
- *
- * @param error - The error object to check
- * @returns boolean - True if the error is transient and can be retried, false otherwise
- *
- * @example
- * try {
- *   const result = await pool.query(sql, params);
- * } catch (error) {
- *   if (isTransientError(error)) {
- *     // Retry the operation
- *     console.log('Transient error detected, retrying...');
- *   } else {
- *     // Handle permanent error
- *     throw error;
- *   }
- * }
- */
-function isTransientError(error: any): boolean {
-  return error && error.code && transientErrorCodes.has(error.code)
-}
 
 /**
  * Ensures that the unaccent extension is installed in the PostgreSQL database
@@ -80,8 +58,12 @@ async function ensureUnaccentExtension(pool: Pool): Promise<void> {
  * This function initializes a PostgreSQL database client with the provided pool configuration
  * and optional retry options. It sets up monitoring for connection events and query operations.
  *
+ * Transient connection errors are retried only for read-only statements,
+ * unless `retryOptions.retryWrites` is set (see `shouldRetry`). Without
+ * `retryOptions`, `DEFAULT_RETRY_OPTIONS` applies.
+ *
  * @param pool - The PostgreSQL pool instance
- * @param retryOptions - Optional retry options for failed queries
+ * @param retryOptions - Optional retry options for failed queries (defaults to `DEFAULT_RETRY_OPTIONS`)
  * @param poolConfig - Optional pool configuration
  * @param installUnaccentExtension - Optional flag to install unaccent extension
  * @returns IDatabaseClient - The PostgreSQL database client instance
@@ -97,7 +79,7 @@ async function ensureUnaccentExtension(pool: Pool): Promise<void> {
  */
 export const createPgClient = async (
   pool: Pool,
-  retryOptions?: RetryOptions,
+  retryOptions: RetryOptions = DEFAULT_RETRY_OPTIONS,
   poolConfig?: PoolConfig,
   installUnaccentExtension?: boolean
 ): Promise<IDatabaseClient> => {
@@ -146,7 +128,7 @@ export const createPgClient = async (
             error,
           })
 
-          if (isTransientError(error)) {
+          if (shouldRetry(error, sql, transientErrorCodes, retryOptions)) {
             monitor.emit(MonitorEvents.RETRY_ATTEMPT, {
               clientType: 'pg',
               sql,
@@ -160,78 +142,124 @@ export const createPgClient = async (
 
           throw error
         }
-      }, retryOptions)
+      }, toPromiseRetryOptions(retryOptions))
     },
     beginTransaction: async (): Promise<ITransactionClient> => {
       const client: PoolClient = await pool.connect()
 
+      // pg-pool detaches its own 'error' listener while a client is checked
+      // out, so a connection dropped mid-transaction (failover, restart,
+      // pg_terminate_backend) would otherwise be an unhandled 'error' event
+      // and crash the process.
+      let connectionError: Error | undefined
+      const onClientError = (error: Error) => {
+        connectionError = error
+        monitor.emit(MonitorEvents.POOL_ERROR, {
+          clientType: 'pg',
+          error,
+          inTransaction: true,
+        })
+      }
+      client.on('error', onClientError)
+
+      // Releasing twice either throws from pg-pool (masking the original
+      // error) or, worse, hands the connection to another caller while a
+      // late ROLLBACK is still sent on it. Every exit path goes through here.
+      let finished = false
+      const finish = (error?: unknown) => {
+        if (finished) return
+        finished = true
+        client.removeListener('error', onClientError)
+        // A truthy argument makes pg-pool destroy the client instead of
+        // returning a possibly broken connection to the pool.
+        client.release((error as Error | undefined) ?? connectionError)
+      }
+
+      const assertActive = () => {
+        if (finished) {
+          throw new Error(
+            '@starbemtech/star-db-query-builder: transaction already finished'
+          )
+        }
+      }
+
       try {
         await client.query('BEGIN')
-
-        return {
-          clientType: 'pg',
-          query: async <T>(sql: string, params?: any[]): Promise<T> => {
-            const startTime = Date.now()
-            try {
-              monitor.emit(MonitorEvents.QUERY_START, {
-                clientType: 'pg',
-                sql,
-                params,
-                attempt: 1,
-                inTransaction: true,
-              })
-
-              const { rows } = await client.query(sql, params)
-
-              const elapsedTime = Date.now() - startTime
-              monitor.emit(MonitorEvents.QUERY_END, {
-                clientType: 'pg',
-                sql,
-                params,
-                attempt: 1,
-                elapsedTime,
-                inTransaction: true,
-              })
-
-              return rows as unknown as T
-            } catch (error) {
-              const elapsedTime = Date.now() - startTime
-              monitor.emit(MonitorEvents.QUERY_ERROR, {
-                clientType: 'pg',
-                sql,
-                params,
-                attempt: 1,
-                elapsedTime,
-                error,
-                inTransaction: true,
-              })
-              throw error
-            }
-          },
-          commit: async (): Promise<void> => {
-            try {
-              await client.query('COMMIT')
-              monitor.emit(MonitorEvents.TRANSACTION_COMMIT, {
-                clientType: 'pg',
-              })
-            } finally {
-              client.release()
-            }
-          },
-          rollback: async (): Promise<void> => {
-            try {
-              await client.query('ROLLBACK')
-              monitor.emit(MonitorEvents.TRANSACTION_ROLLBACK, {
-                clientType: 'pg',
-              })
-            } finally {
-              client.release()
-            }
-          },
-        }
       } catch (error) {
-        client.release()
+        finish(error)
         throw error
+      }
+
+      return {
+        clientType: 'pg',
+        query: async <T>(sql: string, params?: any[]): Promise<T> => {
+          assertActive()
+          const startTime = Date.now()
+          try {
+            monitor.emit(MonitorEvents.QUERY_START, {
+              clientType: 'pg',
+              sql,
+              params,
+              attempt: 1,
+              inTransaction: true,
+            })
+
+            const { rows } = await client.query(sql, params)
+
+            const elapsedTime = Date.now() - startTime
+            monitor.emit(MonitorEvents.QUERY_END, {
+              clientType: 'pg',
+              sql,
+              params,
+              attempt: 1,
+              elapsedTime,
+              inTransaction: true,
+            })
+
+            return rows as unknown as T
+          } catch (error) {
+            const elapsedTime = Date.now() - startTime
+            monitor.emit(MonitorEvents.QUERY_ERROR, {
+              clientType: 'pg',
+              sql,
+              params,
+              attempt: 1,
+              elapsedTime,
+              error,
+              inTransaction: true,
+            })
+            throw error
+          }
+        },
+        commit: async (): Promise<void> => {
+          assertActive()
+          try {
+            await client.query('COMMIT')
+          } catch (error) {
+            finish(error)
+            throw error
+          }
+          finish()
+          monitor.emit(MonitorEvents.TRANSACTION_COMMIT, {
+            clientType: 'pg',
+          })
+        },
+        // No-op once the transaction has finished (committed, rolled back or
+        // failed to commit): the connection is no longer ours to send
+        // ROLLBACK on, and a failed COMMIT already ended the transaction.
+        rollback: async (): Promise<void> => {
+          if (finished) return
+          try {
+            await client.query('ROLLBACK')
+          } catch (error) {
+            finish(error)
+            throw error
+          }
+          finish()
+          monitor.emit(MonitorEvents.TRANSACTION_ROLLBACK, {
+            clientType: 'pg',
+          })
+        },
       }
     },
   }
