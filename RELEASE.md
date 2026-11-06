@@ -5,104 +5,80 @@ Step-by-step for cutting a new release of `@starbemtech/star-db-query-builder`.
 ## Prerequisites (one-time, verify if unsure)
 
 - Trusted Publisher configured on npmjs.com for this package, pointing at repo `starbem/star-db-query-builder` and workflow file `release.yml`. Without this, `npm publish` in CI fails with 403 — there is no `NPM_TOKEN` fallback.
-- You have push access to `main` and permission to create tags.
+- Permission to push branches and tags, and to get PRs merged into `main` (protected: PR + required checks + reviews).
+- GitHub CLI (`gh`) authenticated, used to open the release PR.
+
+## Why two phases
+
+`main` is protected: it only accepts PRs, with the required CI checks and reviews, so the release commit (version bump + CHANGELOG) goes through a PR like any other change. PRs are squash-merged, so the commit that lands on `main` is not the one created on the release branch. The tag is therefore created only after the merge, on `main`'s HEAD. A tag created before the merge would point at a commit that never lands on `main`.
 
 ## Steps
 
-1. **Be on an up-to-date `main` with a clean working tree.**
+1. **Merge whatever should ship into `main` first.** Feature/fix work goes through its own PRs. The release flow starts once that is merged.
+
+2. **Check the `[Unreleased]` section of `CHANGELOG.md`** and decide the bump:
+
+   - **patch**: bug fixes, no API change.
+   - **minor**: new functionality, backward compatible. Also use minor (not patch) for a surface-level breaking change that doesn't change behavior at runtime (e.g. the `insert`/`insertMany` column-quoting change from 2026-09-04 — SQL output changed visibly but was semantically equivalent).
+   - **major**: real breaking change to the public API.
+
+   When unsure, compare with the commits since the last tag (`git log <last-tag>..HEAD --no-merges --oneline`).
+
+3. **Open the release PR** from an up-to-date, clean `main`:
 
    ```bash
    git checkout main
-   git pull origin main
-   git status   # must be clean
+   pnpm run release prepare patch   # or minor / major
    ```
 
-2. **Merge in whatever should ship.** All the actual feature/fix work happens on branches via PR into `main` beforehand — this flow starts once that's already merged. Do not develop the release itself on `main`.
+   This:
 
-3. **Run the full local gate** (same checks CI runs):
+   - pulls `main` (fast-forward only) and refuses to run with uncommitted changes or from another branch;
+   - runs the full local gate: `pnpm install --frozen-lockfile`, `lint`, `format:check`, `type:check`, `build`, `test:ci`;
+   - bumps `package.json` (`npm version <bump> --no-git-tag-version`: no commit, no tag);
+   - moves the `[Unreleased]` entries under `## [X.Y.Z] - YYYY-MM-DD` (fails if `[Unreleased]` is missing or empty, or the version already exists);
+   - commits `docs: update changelog and bump version to X.Y.Z` on `release/X.Y.Z`, pushes it and opens the PR with `gh`.
+
+   It refuses to continue if the `vX.Y.Z` tag or the `release/X.Y.Z` branch already exists, and restores `package.json` when it stops.
+
+4. **Get the release PR reviewed and merged** (squash), like any other PR. If `main` moves in the meantime, update the PR branch and wait for CI again.
+
+5. **Tag `main` and publish:**
 
    ```bash
-   pnpm install --frozen-lockfile
-   pnpm run lint
-   pnpm run format:check
-   pnpm run type:check
-   pnpm run build
-   pnpm run test:ci
+   git checkout main
+   pnpm run release tag
    ```
 
-   Fix anything that fails before continuing. Don't rely on CI to catch it after the tag is pushed — by then the release workflow is already running.
+   This pulls `main`, checks that `package.json`'s version has not been tagged yet and has a `## [X.Y.Z]` section in the CHANGELOG, shows the commit to be tagged and asks for confirmation. It then creates `vX.Y.Z` on `main`'s HEAD and pushes **only that tag** (never `git push --tags`, which would also push any stray local `v*` tag and trigger an unintended release).
 
-4. **Decide the version bump.**
+   Pushing the tag is what triggers `.github/workflows/release.yml`. Merging the PR alone does **not** publish anything.
 
-   - **patch** — bug fixes, no API change.
-   - **minor** — new functionality, backward compatible. Also use minor (not patch) for a surface-level breaking change that doesn't change behavior at runtime (e.g. the `insert`/`insertMany` column-quoting change from 2026-09-04 — SQL output changed visibly but was semantically equivalent).
-   - **major** — real breaking change to the public API.
-
-   When unsure, check `CHANGELOG.md`'s `[Unreleased]` section and the merged PRs since the last tag (`git log <last-tag>..HEAD --no-merges --oneline`) to judge the right bump.
-
-5. **Update `CHANGELOG.md`.** Move the relevant `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading, following the existing Keep a Changelog format already in the file. Commit this on its own:
-
-   ```bash
-   git add CHANGELOG.md
-   git commit -m "docs: update changelog for version X.Y.Z"
-   ```
-
-6. **Bump the version and create the tag.**
-
-   Check `package.json`'s current `version` first — if the merged PR already bumped it by hand (as opposed to leaving it untouched for this step to bump), **do not** run `pnpm run version:*` again; that would bump a second time (e.g. an already-set `1.4.0` becoming `1.5.0` instead of being tagged as `1.4.0`). In that case just create and push the tag matching the version already in `package.json`:
-
-   ```bash
-   git tag vX.Y.Z   # X.Y.Z = the version already in package.json
-   ```
-
-   Otherwise, if `package.json` still has the previous release's version, bump it normally — this updates `package.json`'s `version` field, commits it, and creates a local `vX.Y.Z` tag:
-
-   ```bash
-   pnpm run version:patch   # or version:minor / version:major
-   ```
-
-   (Equivalent to `npm version <patch|minor|major>`.)
-
-7. **Push the branch and the tag:**
-
-   ```bash
-   git push origin main
-   git push origin --tags
-   ```
-
-   Pushing the tag is what triggers `.github/workflows/release.yml`. Pushing commits to `main` alone does **not** publish anything — only a tag matching `v*.*.*` does.
-
-8. **Watch the release workflow:** https://github.com/starbem/star-db-query-builder/actions
+6. **Watch the release workflow:** https://github.com/starbem/star-db-query-builder/actions
 
    It runs, in order: install → build → test:ci → generates release notes from real `git log` commits since the previous tag → creates the GitHub Release → `npm publish --access public --ignore-scripts` (via OIDC Trusted Publishing, no token). Notes/release are created before publish so the GitHub Release exists even if the publish step itself fails.
 
-9. **Verify after it finishes:**
+7. **Verify after it finishes:**
 
    ```bash
    npm view @starbemtech/star-db-query-builder version
    ```
 
-   Confirm it matches the tag, and check the GitHub Releases page for the generated notes.
-
-## Alternative: interactive script
-
-`scripts/release.sh` wraps steps 3–7 into one interactive prompt (runs tests/lint/build, updates the changelog, asks for patch/minor/major, asks whether to push the tag). It still requires you to be on a clean `main`. Prefer it for a routine release; prefer the manual steps above when you need finer control (e.g. curating the changelog entry by hand first).
-
-```bash
-pnpm run release
-```
+   The publish log may say the package "is being processed"; the registry can take a few minutes to show the new version. Also check the GitHub Releases page for the generated notes.
 
 ## If something goes wrong after pushing the tag
 
-- **Workflow fails before publish** (lint/test/build step): fix the issue on `main`, then delete and recreate the tag pointing at the fixed commit:
+- **Workflow fails before publish** (install/build/test step): delete the tag, fix the issue through a PR into `main`, then tag again from the fixed `main`:
 
   ```bash
   git tag -d vX.Y.Z
   git push origin :refs/tags/vX.Y.Z
-  # fix, commit, push to main
-  git tag vX.Y.Z
-  git push origin vX.Y.Z
+  # fix through a PR into main, merge it, then:
+  git checkout main
+  pnpm run release tag
   ```
+
+  If the failure happened after the "Create GitHub Release" step, also delete that release (`gh release delete vX.Y.Z`) before tagging again, or the step fails because the release already exists.
 
 - **Publish step fails with 403**: Trusted Publisher isn't configured correctly on npmjs.com for this repo/workflow — this is not something retrying the workflow fixes. Check the package's Trusted Publishers settings first.
 

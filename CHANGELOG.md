@@ -9,6 +9,8 @@ Entries below are generated from the real commit history for each tagged release
 
 ## [Unreleased]
 
+- `chore`: `scripts/release.sh` rewritten for the protected `main`: `pnpm run release prepare <patch|minor|major>` runs the full local gate (now including `format:check` and `type:check`), bumps `package.json`, moves the `[Unreleased]` entries under the new version on a `release/X.Y.Z` branch and opens the PR; `pnpm run release tag` tags `main`'s HEAD after the squash merge and pushes only that tag. Fixes the old script writing an empty version in the CHANGELOG heading (`$NEW_VERSION` was used before being set), collapsing both headings into one line on macOS (BSD `sed`), leaving a stray CHANGELOG commit when the release was cancelled, and pushing every local tag with `git push --tags`. The `release:patch`/`release:minor`/`release:major` scripts, which tagged locally and pushed every tag, were removed. `RELEASE.md` documents the new flow.
+
 ## [1.4.2] - 2026-11-06
 
 - `fix`: a PostgreSQL pool no longer crashes the process when an idle connection is dropped (Aurora failover/restart, `pg_terminate_backend`, network reset). `initDb` now attaches a `pool.on('error')` listener that emits the new `MonitorEvents.POOL_ERROR` (`{ clientType, clientName, error }`) instead of letting `pg-pool`'s `'error'` event go unhandled. The same applies to a connection dropped while checked out by a transaction (`inTransaction: true`), since `pg-pool` detaches its own listener while a client is checked out. Fixes #28.
